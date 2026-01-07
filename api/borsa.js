@@ -4,17 +4,7 @@ import * as cheerio from 'cheerio';
 
 function formatPara(sayi, sembol = "") {
     if (sayi === null || sayi === undefined) return "Veri Yok";
-    
-    if (typeof sayi === 'string') {
-        if (sayi.includes("Veri") || sayi.includes("Yok")) return "Veri Yok";
-        // Zaten formatlıysa (1.234,56)
-        if (sayi.includes(",") && !sayi.includes(".")) {
-             return sembol && !sayi.includes(sembol) ? `${sayi} ${sembol}` : sayi;
-        }
-        sayi = parseFloat(sayi.replace(/\./g, "").replace(",", "."));
-    }
-
-    if (isNaN(sayi)) return "Veri Yok";
+    if (typeof sayi === 'string') return sayi; // Zaten formatlıysa elleme
 
     let maxDigits = 2;
     if (Math.abs(sayi) < 1 && Math.abs(sayi) > 0) maxDigits = 6;
@@ -25,12 +15,7 @@ function formatPara(sayi, sembol = "") {
 
 function formatHacim(sayi) {
     if (!sayi || sayi === "Veri Yok") return "Veri Yok";
-    
-    if (typeof sayi === 'string' && /[a-zA-Z]/.test(sayi)) return sayi;
-    
-    if (typeof sayi === 'string') sayi = parseFloat(sayi.replace(/\./g, "").replace(",", "."));
-
-    if (isNaN(sayi)) return "Veri Yok";
+    if (typeof sayi === 'string') return sayi;
 
     if (sayi >= 1.0e+9) return (sayi / 1.0e+9).toFixed(2).replace(".", ",") + " Mr";
     if (sayi >= 1.0e+6) return (sayi / 1.0e+6).toFixed(2).replace(".", ",") + " Mn";
@@ -46,38 +31,76 @@ function getTrendEmoji(degisim) {
     return "⚪"; 
 }
 
-async function fetchWithHeaders(url) {
-    return await fetch(url, {
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Referer': 'https://www.google.com/',
-            'Cache-Control': 'no-cache'
-        }
-    });
+// --- KAYNAK 1: TRADINGVIEW (JSON API - En Sağlamı) ---
+async function getirHisseTradingView(symbol) {
+    try {
+        // TradingView Scanner API (HTML parse derdi yok, direkt veri!)
+        const url = "https://scanner.tradingview.com/turkey/scan";
+        
+        // BIST hisselerini sorgulamak için payload
+        const body = {
+            "symbols": {
+                "tickers": [`BIST:${symbol}`] // Örn: BIST:BOBET
+            },
+            "columns": [
+                "close",        // 0: Son Fiyat
+                "change|1d",    // 1: Değişim %
+                "volume",       // 2: Hacim
+                "market_cap_basic", // 3: Piyasa Değeri
+                "description",  // 4: Şirket Adı
+                "high",         // 5: Gün Yüksek
+                "low"           // 6: Gün Düşük
+            ]
+        };
+
+        const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        });
+
+        if (!response.ok) return null;
+
+        const json = await response.json();
+        
+        // Eğer data boşsa hisse bulunamadı demektir
+        if (!json.data || json.data.length === 0) return null;
+
+        const d = json.data[0].d; // Veri dizisi
+
+        return {
+            kaynak: "TradingView",
+            fiyat: d[0],
+            degisim: d[1],
+            hacim: d[2],
+            piyasa_degeri: d[3],
+            baslik: d[4],
+            gun_yuksek: d[5],
+            gun_dusuk: d[6]
+        };
+
+    } catch (e) { 
+        console.log("TradingView fail:", e.message); 
+        return null;
+    }
 }
 
-// --- KAYNAK 1: DOVİZ.COM ---
+// --- KAYNAK 2: DOVİZ.COM (Yedek - HTML Scraper) ---
 async function getirHisseDoviz(symbol) {
-    const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
-    const debug = { url: url, adimlar: [] };
-
     try {
-        const response = await fetchWithHeaders(url);
-        debug.adimlar.push(`HTTP: ${response.status}`);
+        const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
+        const response = await fetch(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+        });
         
         if (!response.ok) return null;
 
         const html = await response.text();
-        // Boş response kontrolü
-        if (!html || html.length < 500) {
-            debug.adimlar.push("HTML İçeriği çok kısa veya boş (Bloklandı).");
-            return null;
-        }
-
         const $ = cheerio.load(html);
         
+        // Fiyatı bul
         let fiyatText = $('div[data-socket-key="' + symbol + '"]').text().trim();
         if (!fiyatText) fiyatText = $('div[class*="text-4xl"]').first().text().trim();
         
@@ -97,9 +120,10 @@ async function getirHisseDoviz(symbol) {
                 if (label.includes("Piyasa Değeri")) piyasaDegeri = val;
             });
 
+            // Doviz.com'dan gelen stringleri parse etmiyoruz, formatPara fonksiyonu halledecek
             return {
                 kaynak: "Doviz.com",
-                fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
+                fiyat: fiyatText, // String olarak gönderiyoruz: "2.052,00"
                 degisim: parseFloat(degisimText.replace(",", ".")),
                 baslik: baslik || symbol,
                 hacim_txt: hacim,
@@ -108,80 +132,6 @@ async function getirHisseDoviz(symbol) {
             };
         }
     } catch (e) { console.log("Doviz.com fail"); }
-    return null;
-}
-
-// --- KAYNAK 2: BIGPARA (Akıllı API Destekli) ---
-async function getirHisseBigpara(symbol) {
-    try {
-        // 1. Adım: Bigpara API'den hissenin doğru URL slug'ını bul
-        const searchUrl = `https://bigpara.hurriyet.com.tr/api/v1/search/kripto-borsa-doviz-hisse?query=${symbol}`;
-        const searchRes = await fetchWithHeaders(searchUrl);
-        
-        if (!searchRes.ok) return null;
-        
-        const searchJson = await searchRes.json();
-        // Gelen listeden tam eşleşeni veya ilk hisseyi bul
-        const hisse = searchJson.data?.find(d => d.type === "Hisse") || searchJson.data?.[0];
-        
-        if (!hisse || !hisse.slug) return null;
-
-        // 2. Adım: Detay sayfasına git
-        const detailUrl = `https://bigpara.hurriyet.com.tr/borsa/hisse-fiyatlari/${hisse.slug}-detay/`;
-        const htmlRes = await fetchWithHeaders(detailUrl);
-        const html = await htmlRes.text();
-        const $ = cheerio.load(html);
-
-        // Bigpara Seçicileri
-        // Fiyat: .price-container .value veya .proDetail .priceBox .price
-        const fiyatText = $('.price-container .value').first().text().trim() || 
-                          $('.proDetail .priceBox .price').first().text().trim();
-        
-        if (fiyatText) {
-            const degisimText = $('.price-container .rate').first().text().replace("%", "").trim() ||
-                                $('.proDetail .priceBox .dir').first().text().replace("%", "").trim();
-            
-            // Yön kontrolü (Düşüşte mi?)
-            const isDown = $('.price-container .rate').hasClass('down') || $('.proDetail .priceBox .dir').hasClass('down');
-            let degisim = parseFloat(degisimText.replace(",", "."));
-            if (isDown) degisim = -Math.abs(degisim);
-
-            const baslik = $('h1').first().text().trim();
-
-            // Detaylar
-            let hacim = null;
-            let gunDusuk = null;
-            let gunYuksek = null;
-            let piyasaDegeri = null;
-
-            // Bigpara detay kutuları
-            $('.detail-item').each((i, el) => {
-                const label = $(el).find('.label').text().trim();
-                const val = $(el).find('.value').text().trim();
-                
-                if (label.includes("Hacim")) hacim = val;
-                if (label.includes("Piyasa Değeri")) piyasaDegeri = val;
-                if (label.includes("Günlük Aralık")) {
-                    const parts = val.split('-');
-                    if (parts.length === 2) {
-                        gunDusuk = parts[0].trim();
-                        gunYuksek = parts[1].trim();
-                    }
-                }
-            });
-
-            return {
-                kaynak: "Bigpara",
-                fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
-                degisim: degisim,
-                baslik: baslik || symbol,
-                hacim_txt: hacim,
-                gun_araligi_txt: gunDusuk && gunYuksek ? `${gunDusuk} - ${gunYuksek}` : "Veri Yok",
-                piyasa_degeri_txt: piyasaDegeri
-            };
-        }
-
-    } catch (e) { console.log("Bigpara fail:", e.message); }
     return null;
 }
 
@@ -197,35 +147,60 @@ export default async function handler(req, res) {
     }
 
     const symbol = kod.toUpperCase().trim();
-    
-    // STRATEJİ: Önce Doviz.com, Olmazsa Bigpara
-    let sonuc = await getirHisseDoviz(symbol);
-    
-    if (!sonuc) {
-        sonuc = await getirHisseBigpara(symbol);
-    }
+    let sonuc = null;
 
-    if (sonuc) {
-        res.status(200).json({
-            tur: "Borsa İstanbul",
-            sembol: symbol,
-            baslik: sonuc.baslik,
-            kaynak: sonuc.kaynak,
+    try {
+        // STRATEJİ: Önce TradingView (API), Olmazsa Doviz.com (HTML)
+        
+        sonuc = await getirHisseTradingView(symbol);
+        
+        if (!sonuc) {
+            sonuc = await getirHisseDoviz(symbol);
+        }
+
+        if (sonuc) {
+            // Verileri Formatla
             
-            fiyat: formatPara(sonuc.fiyat, "TL"),
-            degisim_yuzde: sonuc.degisim.toFixed(2),
-            degisim_emoji: getTrendEmoji(sonuc.degisim),
-            
-            gun_araligi: sonuc.gun_araligi_txt || "Veri Yok",
-            hacim: formatHacim(sonuc.hacim_txt),
-            piyasa_degeri: formatHacim(sonuc.piyasa_degeri_txt)
-        });
-    } else {
-        // İki kaynak da patladıysa
-        res.status(404).json({ 
-            hata: true, 
-            mesaj: `Hisse verisi Doviz.com ve Bigpara'dan çekilemedi (${symbol}).`,
-            sebep: "Sunucu IP'si engellenmiş veya hisse kodu hatalı olabilir."
-        });
+            // Gün Aralığı
+            let gunAraligiFinal = "Veri Yok";
+            if (sonuc.gun_dusuk && sonuc.gun_yuksek) {
+                gunAraligiFinal = `${formatPara(sonuc.gun_dusuk)} - ${formatPara(sonuc.gun_yuksek)}`;
+            } else if (sonuc.gun_araligi_txt) {
+                gunAraligiFinal = sonuc.gun_araligi_txt;
+            }
+
+            // Hacim
+            let hacimFinal = "Veri Yok";
+            if (sonuc.hacim) hacimFinal = formatHacim(sonuc.hacim);
+            else if (sonuc.hacim_txt) hacimFinal = sonuc.hacim_txt;
+
+            // Piyasa Değeri
+            let pdFinal = "Veri Yok";
+            if (sonuc.piyasa_degeri) pdFinal = formatHacim(sonuc.piyasa_degeri);
+            else if (sonuc.piyasa_degeri_txt) pdFinal = sonuc.piyasa_degeri_txt;
+
+            res.status(200).json({
+                tur: "Borsa İstanbul",
+                sembol: symbol,
+                baslik: sonuc.baslik,
+                kaynak: sonuc.kaynak,
+                
+                fiyat: formatPara(sonuc.fiyat, "TL"),
+                degisim_yuzde: sonuc.degisim.toFixed(2),
+                degisim_emoji: getTrendEmoji(sonuc.degisim),
+                
+                gun_araligi: gunAraligiFinal,
+                hacim: hacimFinal,
+                piyasa_degeri: pdFinal
+            });
+        } else {
+            res.status(404).json({ 
+                hata: true, 
+                mesaj: `Hisse verisi TradingView ve Doviz.com'dan çekilemedi (${symbol}).`,
+                sebep: "Kod hatalı olabilir veya kaynaklar yanıt vermiyor."
+            });
+        }
+    } catch (err) {
+        res.status(500).json({ hata: true, mesaj: "Sunucu hatası", detay: err.message });
     }
 }
