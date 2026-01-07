@@ -176,7 +176,7 @@ async function getirGenelFinans(kod) {
     }
 }
 
-// --- 3. MODÜL: BORSA İSTANBUL (Yahoo -> Google -> Doviz.com) ---
+// --- 3. MODÜL: BORSA İSTANBUL (Sıralı Deneme: Yahoo -> Google -> Doviz.com) ---
 
 // Yahoo Finance Scraper
 async function getirHisseYahoo(symbol) {
@@ -213,7 +213,7 @@ async function getirHisseYahoo(symbol) {
     return null;
 }
 
-// Google Finance Scraper (Akıllı Metin Arama Modu)
+// Google Finance Scraper (Akıllı Etiket Avcısı)
 async function getirHisseGoogle(symbol) {
     try {
         const url = `https://www.google.com/finance/quote/${symbol}:IST`;
@@ -229,30 +229,32 @@ async function getirHisseGoogle(symbol) {
         const degisimText = $('.JwB6zf').first().text().replace("%", "").trim();
         const baslik = $('.zzDege').first().text().trim();
         
-        // Detayları Akıllı Arama ile Bul
-        let piyasaDegeri = "Veri Yok";
-        let gunAraligi = "Veri Yok";
-        
-        // Class isimlerine güvenmeden, içeriğe göre bul
+        let piyasaDegeri = null;
+        let gunAraligi = null;
+        let hacim = null;
+
+        // "Piyasa değeri", "Gün aralığı" gibi yazıların olduğu divleri bul
+        // ve onların hemen yanındaki veya altındaki değerleri çek
         $('div').each((i, el) => {
             const text = $(el).text().trim();
-            // Google yapısı: Label ve Value ayrı divlerde ama aynı containerda olabilir
-            // Bu yüzden "Piyasa değeri" yazısını bulunca, o divin içindeki veya yanındaki sayısal değeri almaya çalışırız
-            // Google'da yapı genelde: <div class="gyFHrc"><div class="mfs7Fc">Piyasa değeri</div><div class="P6K39c">2,50 Mr</div></div>
             
-            // Eğer element sadece "Piyasa değeri" yazıyorsa, kardeşine bak
-            if (text === "Piyasa değeri") {
-                const val = $(el).next().text().trim();
-                if(val) piyasaDegeri = val;
+            // Tam eşleşme kontrolü (Etiket: "Piyasa değeri")
+            if (text === "Piyasa değeri" && !piyasaDegeri) {
+                // Değer genelde bir sonraki div'de olur
+                piyasaDegeri = $(el).next().text().trim(); 
+                // Eğer next() boşsa parent'ın son çocuğuna bak
+                if (!piyasaDegeri) piyasaDegeri = $(el).parent().children().last().text().trim();
             }
-            if (text === "Gün aralığı") {
-                const val = $(el).next().text().trim();
-                if(val) gunAraligi = val;
+            
+            if (text === "Gün aralığı" && !gunAraligi) {
+                gunAraligi = $(el).next().text().trim();
+                if (!gunAraligi) gunAraligi = $(el).parent().children().last().text().trim();
             }
         });
 
-        // Eğer yukarıdaki yöntem tutmazsa, class tabanlı yedek
-        if (piyasaDegeri === "Veri Yok") {
+        // Eğer hala boşsa (Bazen Google yapısı grid şeklindedir)
+        // Tablo gibi olan yapıları tara
+        if (!piyasaDegeri || !gunAraligi) {
              $('.gyFHrc').each((i, el) => {
                 const label = $(el).find('.mfs7Fc').text().trim();
                 const val = $(el).find('.P6K39c').text().trim();
@@ -273,7 +275,7 @@ async function getirHisseGoogle(symbol) {
     return null;
 }
 
-// Doviz.com Scraper (Yerli ve Milli Yedek)
+// Doviz.com Scraper (Yedek)
 async function getirHisseDoviz(symbol) {
     try {
         const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
@@ -289,12 +291,12 @@ async function getirHisseDoviz(symbol) {
             const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
             const baslik = $('title').text().split('|')[0].trim();
             
-            let hacim = "Veri Yok";
-            let gunAraligi = "Veri Yok";
+            let hacim = null;
+            let gunAraligi = null;
             
-            // Doviz.com tablo yapısı
+            // Doviz.com istatistik satırlarını tara
             $('.value-table-row').each((i, el) => {
-                const label = $(el).find('.label').text().trim(); // "Hacim (TL)" gibi
+                const label = $(el).find('.label').text().trim(); 
                 const val = $(el).find('.value').text().trim();
                 if (label.includes("Hacim")) hacim = val;
                 if (label.includes("Gün Aralığı")) gunAraligi = val;
@@ -313,7 +315,7 @@ async function getirHisseDoviz(symbol) {
     return null;
 }
 
-// Ana Borsa Fonksiyonu (Yönetici)
+// Ana Borsa Fonksiyonu
 async function getirHisse(kod) {
     const symbol = kod.toUpperCase().trim();
     
@@ -388,7 +390,6 @@ export default async function handler(req, res) {
         }
         else {
             const k = temizKod.toUpperCase();
-            // Genişletilmiş liste
             const dovizler = ["USD", "EUR", "GBP", "GRAM", "ONS", "BRENT", "GUMUS", "DOLAR", "EURO", "ALTIN", "STERLIN", "TAM", "YARIM", "CEYREK", "CUMHURIYET", "ATA", "RESAT", "22AYAR", "14AYAR", "18AYAR", "BILEZIK"];
             
             if (dovizler.includes(k)) {
