@@ -2,17 +2,30 @@ import * as cheerio from 'cheerio';
 
 // --- YARDIMCI FONKSİYONLAR ---
 
-function formatPara(sayi) {
+function formatPara(sayi, sembol = "") {
     if (!sayi && sayi !== 0) return "Veri Yok";
-    return new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(sayi);
+    // Eğer sayı çok küçükse (0.00004 gibi) daha fazla basamak göster
+    let maxDigits = 2;
+    if (Math.abs(sayi) < 1 && Math.abs(sayi) > 0) maxDigits = 6;
+    
+    const formatted = new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: maxDigits }).format(sayi);
+    return sembol ? `${formatted} ${sembol}` : formatted;
+}
+
+function formatHacim(sayi) {
+    if (!sayi) return "Veri Yok";
+    if (sayi >= 1.0e+9) return (sayi / 1.0e+9).toFixed(2) + " Mr";
+    if (sayi >= 1.0e+6) return (sayi / 1.0e+6).toFixed(2) + " Mn";
+    if (sayi >= 1.0e+3) return (sayi / 1.0e+3).toFixed(2) + " B";
+    return sayi.toString();
 }
 
 function getTrendEmoji(degisim) {
     const d = parseFloat(degisim);
     if (isNaN(d)) return "➖";
-    if (d > 0) return "🟢"; 
-    if (d < 0) return "🔴"; 
-    return "⚪"; 
+    if (d > 0) return "🟢"; // Yükseliş
+    if (d < 0) return "🔴"; // Düşüş
+    return "⚪"; // Nötr
 }
 
 // Ortak Fetch Fonksiyonu
@@ -46,6 +59,7 @@ async function getirKripto(sembol) {
         let data = null;
         let kaynak = "Binance";
 
+        // 1. Deneme: BINANCE
         try {
             const urlBinance = `https://api.binance.com/api/v3/ticker/24hr?symbol=${pair}`;
             const resBinance = await fetchWithHeaders(urlBinance);
@@ -54,6 +68,7 @@ async function getirKripto(sembol) {
             }
         } catch (e) { console.log("Binance fail"); }
 
+        // 2. Deneme: MEXC
         if (!data && pair.endsWith("USDT")) {
             try {
                 kaynak = "MEXC (Yedek)";
@@ -70,19 +85,31 @@ async function getirKripto(sembol) {
         }
         
         const fiyat = parseFloat(data.lastPrice);
-        let fiyatStr = formatPara(fiyat);
-        if (fiyat < 1) fiyatStr = fiyat.toFixed(6); 
+        const degisim = parseFloat(data.priceChangePercent);
+        const acilis = parseFloat(data.openPrice);
+        const dusuk = parseFloat(data.lowPrice);
+        const yuksek = parseFloat(data.highPrice);
+        const hacimBaz = parseFloat(data.volume); // Coin cinsinden hacim
+        const hacimQuote = parseFloat(data.quoteVolume); // USDT cinsinden hacim
 
         return {
             tur: "Kripto Para",
             kaynak: kaynak,
             baslik: `${pair}`,
-            fiyat: `${fiyatStr} $`,
-            degisim_yuzde: parseFloat(data.priceChangePercent).toFixed(2),
-            degisim_emoji: getTrendEmoji(data.priceChangePercent),
-            en_yuksek_24s: parseFloat(data.highPrice),
-            en_dusuk_24s: parseFloat(data.lowPrice),
-            hacim: formatPara(data.quoteVolume) + (pair.endsWith("USDT") ? " USDT" : "")
+            // Temel Veriler
+            fiyat: formatPara(fiyat, "$"),
+            degisim_yuzde: degisim.toFixed(2),
+            degisim_emoji: getTrendEmoji(degisim),
+            
+            // Detay Veriler
+            acilis_fiyati: formatPara(acilis, "$"),
+            gunluk_dusuk: formatPara(dusuk, "$"),
+            gunluk_yuksek: formatPara(yuksek, "$"),
+            gun_araligi: `${formatPara(dusuk)} - ${formatPara(yuksek)}`,
+            
+            hacim_coin: formatHacim(hacimBaz),
+            hacim_usdt: formatHacim(hacimQuote) + " $",
+            islem_sayisi: data.count ? formatHacim(data.count) : "N/A"
         };
 
     } catch (e) {
@@ -102,8 +129,7 @@ async function getirGenelFinans(kod) {
         const aranan = kod.toUpperCase().trim();
         
         let key = "";
-        
-        // --- GENİŞLETİLMİŞ ALTIN VE DÖVİZ EŞLEŞTİRMELERİ ---
+        // Genişletilmiş Eşleştirmeler
         if (aranan === "DOLAR" || aranan === "USD") key = "USD";
         else if (aranan === "EURO" || aranan === "EUR") key = "EUR";
         else if (aranan === "STERLIN" || aranan === "GBP") key = "GBP";
@@ -135,15 +161,25 @@ async function getirGenelFinans(kod) {
         const alis = parseFloat(veri.Alış.replace(/\./g, "").replace(",", "."));
         const satis = parseFloat(veri.Satış.replace(/\./g, "").replace(",", "."));
         const degisim = parseFloat(veri["Değişim"].replace("%", "").replace(",", "."));
+        
+        // Makas Hesabı (Spread)
+        const makas = satis - alis;
+        const makasYuzdesi = (makas / satis) * 100;
 
         return {
             tur: "Piyasa",
             baslik: key.toUpperCase().replace("-", " "),
-            alis: formatPara(alis),
-            satis: formatPara(satis),
-            fiyat: formatPara(satis),
+            // Temel Veriler
+            fiyat: formatPara(satis, "TL"), // Genelde satış fiyatı baz alınır
             degisim_yuzde: degisim,
             degisim_emoji: getTrendEmoji(degisim),
+            
+            // Detaylar
+            alis: formatPara(alis, "TL"),
+            satis: formatPara(satis, "TL"),
+            makas: formatPara(makas, "TL"),
+            makas_orani: `%${makasYuzdesi.toFixed(2)}`,
+            
             guncelleme: veri.Update_Date || new Date().toLocaleTimeString('tr-TR')
         };
 
@@ -152,13 +188,12 @@ async function getirGenelFinans(kod) {
     }
 }
 
-// --- 3. MODÜL: BORSA İSTANBUL (Sıralı Deneme: Yahoo -> Google -> Doviz.com) ---
-
+// --- 3. MODÜL: BORSA İSTANBUL (Yahoo Finance Detaylı) ---
 async function getirHisse(kod) {
     const symbol = kod.toUpperCase().trim();
     let sonuc = null;
 
-    // 1. KAYNAK: YAHOO FINANCE
+    // 1. KAYNAK: YAHOO FINANCE (Çok Detaylı)
     try {
         const yahooSymbol = symbol.endsWith(".IS") ? symbol : `${symbol}.IS`;
         const url = `https://finance.yahoo.com/quote/${yahooSymbol}`;
@@ -168,25 +203,40 @@ async function getirHisse(kod) {
             const html = await response.text();
             const $ = cheerio.load(html);
             
-            const fiyatEl = $(`fin-streamer[data-field="regularMarketPrice"][data-symbol="${yahooSymbol}"]`);
-            const fiyatText = fiyatEl.attr('value') || fiyatEl.text();
+            // Data Field seçicileri Yahoo'da çok stabildir
+            const getVal = (field) => {
+                const el = $(`fin-streamer[data-field="${field}"][data-symbol="${yahooSymbol}"]`);
+                return el.attr('value') || el.text();
+            };
+
+            const fiyatText = getVal("regularMarketPrice");
             
             if (fiyatText) {
-                const degisimEl = $(`fin-streamer[data-field="regularMarketChangePercent"][data-symbol="${yahooSymbol}"]`);
-                const degisimText = degisimEl.attr('value') || degisimEl.text();
+                const degisimText = getVal("regularMarketChangePercent");
+                const hacimText = getVal("regularMarketVolume");
+                const piyasaDegeriText = getVal("marketCap");
+                const gunYuksek = getVal("regularMarketDayHigh");
+                const gunDusuk = getVal("regularMarketDayLow");
+                
                 const baslik = $('h1').first().text().replace(" (.IS)", "").trim();
 
                 sonuc = {
                     kaynak: "Yahoo Finance",
                     fiyat: parseFloat(fiyatText),
                     degisim: parseFloat(degisimText),
-                    baslik: baslik || symbol
+                    baslik: baslik || symbol,
+                    
+                    // Ekstra Detaylar
+                    hacim: parseFloat(hacimText),
+                    piyasa_degeri: parseFloat(piyasaDegeriText),
+                    gun_yuksek: parseFloat(gunYuksek),
+                    gun_dusuk: parseFloat(gunDusuk)
                 };
             }
         }
     } catch (e) { console.log("Yahoo fail"); }
 
-    // 2. KAYNAK: GOOGLE FINANCE
+    // 2. KAYNAK: GOOGLE FINANCE (Yedek - Daha az detay)
     if (!sonuc) {
         try {
             const url = `https://www.google.com/finance/quote/${symbol}:IST`;
@@ -200,19 +250,21 @@ async function getirHisse(kod) {
                 if (fiyatText) {
                     const degisimText = $('.JwB6zf').first().text().replace("%", "").trim();
                     const baslik = $('.zzDege').first().text().trim();
+                    const gunAralik = $('.P6K39c').eq(0).text(); // Gün Aralığı bazen buradadır
                     
                     sonuc = {
                         kaynak: "Google Finance",
                         fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
                         degisim: parseFloat(degisimText.replace(",", ".")),
-                        baslik: baslik || symbol
+                        baslik: baslik || symbol,
+                        ekstra_bilgi: gunAralik // Google'dan bazen aralık gelir
                     };
                 }
             }
         } catch (e) { console.log("Google fail"); }
     }
 
-    // 3. KAYNAK: DOVIZ.COM
+    // 3. KAYNAK: DOVIZ.COM (Yedek)
     if (!sonuc) {
         try {
             const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
@@ -227,7 +279,9 @@ async function getirHisse(kod) {
                 if (fiyatText) {
                     const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
                     const baslik = $('title').text().split('|')[0].trim();
-
+                    
+                    // Doviz.com'da detayları almak için class araması (değişken olabilir)
+                    
                     sonuc = {
                         kaynak: "Doviz.com",
                         fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
@@ -239,15 +293,23 @@ async function getirHisse(kod) {
         } catch (e) { console.log("Doviz.com fail"); }
     }
 
+    // SONUÇ DÖNDÜRME
     if (sonuc) {
         return {
             tur: "Borsa İstanbul",
             sembol: symbol,
             baslik: sonuc.baslik,
-            fiyat: formatPara(sonuc.fiyat) + " TL",
+            kaynak: sonuc.kaynak,
+            
+            // Temel
+            fiyat: formatPara(sonuc.fiyat, "TL"),
             degisim_yuzde: sonuc.degisim.toFixed(2),
             degisim_emoji: getTrendEmoji(sonuc.degisim),
-            kaynak: sonuc.kaynak
+            
+            // Detaylar (Varsa)
+            gun_araligi: sonuc.gun_dusuk && sonuc.gun_yuksek ? `${formatPara(sonuc.gun_dusuk)} - ${formatPara(sonuc.gun_yuksek)}` : (sonuc.ekstra_bilgi || "Veri Yok"),
+            hacim: sonuc.hacim ? formatHacim(sonuc.hacim) : "Veri Yok",
+            piyasa_degeri: sonuc.piyasa_degeri ? formatHacim(sonuc.piyasa_degeri) : "Veri Yok"
         };
     } else {
         return { hata: true, mesaj: `Hisse verisi 3 kaynaktan da çekilemedi (${symbol}).` };
