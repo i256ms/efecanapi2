@@ -5,10 +5,8 @@ import * as cheerio from 'cheerio';
 function formatPara(sayi, sembol = "") {
     if (sayi === null || sayi === undefined) return "Veri Yok";
     
-    // String geldiyse temizle ve sayıya çevir
     if (typeof sayi === 'string') {
         if (sayi.includes("Veri") || sayi.includes("Yok")) return "Veri Yok";
-        // Zaten formatlıysa (1.234,56) dokunma, sadece sembol ekle
         if (sayi.includes(",")) return sembol && !sayi.includes(sembol) ? `${sayi} ${sembol}` : sayi;
         sayi = parseFloat(sayi);
     }
@@ -51,7 +49,7 @@ async function fetchWithHeaders(url) {
     });
 }
 
-// --- 1. MODÜL: KRİPTO PARA (Binance + MEXC Yedekli) ---
+// --- 1. MODÜL: KRİPTO PARA ---
 async function getirKripto(sembol) {
     let pair = "";
     try {
@@ -124,7 +122,7 @@ async function getirKripto(sembol) {
     }
 }
 
-// --- 2. MODÜL: DÖVİZ / ALTIN / EMTİA (Truncgil) ---
+// --- 2. MODÜL: DÖVİZ / ALTIN / EMTİA ---
 async function getirGenelFinans(kod) {
     try {
         const url = "https://finans.truncgil.com/today.json";
@@ -135,6 +133,7 @@ async function getirGenelFinans(kod) {
         const aranan = kod.toUpperCase().trim();
         let key = "";
         
+        // Eşleştirmeler
         if (aranan === "DOLAR" || aranan === "USD") key = "USD";
         else if (aranan === "EURO" || aranan === "EUR") key = "EUR";
         else if (aranan === "STERLIN" || aranan === "GBP") key = "GBP";
@@ -187,9 +186,9 @@ async function getirGenelFinans(kod) {
     }
 }
 
-// --- 3. MODÜL: BORSA İSTANBUL (Sıralama: Doviz.com -> Mynet -> Yahoo -> Google) ---
+// --- 3. MODÜL: BORSA İSTANBUL (Doviz -> Mynet -> Yahoo -> Google) ---
 
-// 1. DOVIZ.COM (İlk Tercih - Yerli ve Detaylı)
+// 1. DOVIZ.COM (İlk Tercih - GÜÇLENDİRİLMİŞ)
 async function getirHisseDoviz(symbol) {
     try {
         const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
@@ -199,10 +198,16 @@ async function getirHisseDoviz(symbol) {
         const html = await response.text();
         const $ = cheerio.load(html);
         
-        // Fiyat "text-4xl" classında, ama bazen değişebiliyor.
-        // Daha güvenli yol: 'data-socket-key' attribute'u olan elementi bulmak
-        const fiyatText = $('div[data-socket-key] .text-4xl').first().text().trim() || 
-                          $('div[class*="text-4xl"]').first().text().trim();
+        // ÖNCEKİ YÖNTEM: Sadece class="text-4xl" arıyorduk.
+        // YENİ YÖNTEM: "data-socket-key" ile nokta atışı yapıyoruz.
+        // Veya sayfadaki en büyük, en belirgin rakamı buluyoruz.
+        
+        let fiyatText = $('div[data-socket-key="' + symbol + '"]').text().trim();
+        
+        if (!fiyatText) {
+            // Yedek: Sayfadaki text-4xl (büyük puntolu) class'ı bul
+            fiyatText = $('div[class*="text-4xl"]').first().text().trim();
+        }
         
         if (fiyatText) {
             const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
@@ -212,13 +217,13 @@ async function getirHisseDoviz(symbol) {
             let gunAraligi = null;
             let piyasaDegeri = null;
             
-            // Tabloyu tara
+            // İstatistik kutuları
             $('.value-table-row').each((i, el) => {
                 const label = $(el).find('.label').text().trim(); 
                 const val = $(el).find('.value').text().trim();
                 
-                if (label.includes("Hacim")) hacim = val; // Örn: 13.5 Mn
-                if (label.includes("Gün Aralığı")) gunAraligi = val; // Örn: 12.40 - 13.00
+                if (label.includes("Hacim")) hacim = val;
+                if (label.includes("Gün Aralığı")) gunAraligi = val;
                 if (label.includes("Piyasa Değeri")) piyasaDegeri = val;
             });
 
@@ -236,10 +241,9 @@ async function getirHisseDoviz(symbol) {
     return null;
 }
 
-// 2. MYNET FİNANS (İkinci Tercih - Arama Destekli)
+// 2. MYNET FİNANS (İkinci Tercih)
 async function getirHisseMynet(symbol) {
     try {
-        // Önce arama yapıp doğru slug'ı bulalım (BNTAS -> bntas-bantas-ambalaj)
         const searchUrl = `https://finans.mynet.com/api/search/searchall?term=${symbol}`;
         const searchRes = await fetchWithHeaders(searchUrl);
         if (!searchRes.ok) return null;
@@ -260,7 +264,6 @@ async function getirHisseMynet(symbol) {
         let piyasaDegeri = null;
         let gunAraligi = null;
 
-        // Detay Listesi
         $('.flex-list-item').each((i, el) => {
             const label = $(el).find('span').first().text().trim();
             const val = $(el).find('span').last().text().trim();
@@ -272,7 +275,6 @@ async function getirHisseMynet(symbol) {
             if (label.includes("Gün Aralığı")) gunAraligi = val;
         });
 
-        // Eğer listeden çıkmazsa header'a bak
         if (!fiyat) {
              const headerFiyat = $('.company-info-current-price').text().trim().split(' ')[0];
              if(headerFiyat) fiyat = parseFloat(headerFiyat.replace(",", "."));
@@ -325,7 +327,7 @@ async function getirHisseYahooJson(symbol) {
     return null;
 }
 
-// 4. GOOGLE FINANCE (Son Çare)
+// 4. GOOGLE FINANCE (Son Çare - Esnek Arama)
 async function getirHisseGoogle(symbol) {
     try {
         const url = `https://www.google.com/finance/quote/${symbol}:IST`;
@@ -344,15 +346,17 @@ async function getirHisseGoogle(symbol) {
         let piyasaDegeri = null;
         let gunAraligi = null;
 
+        // Akıllı Metin Tarama (Smart Text Search)
         $('div').each((i, el) => {
             const text = $(el).text().trim();
-            if (text === "Piyasa değeri") {
+            // "Piyasa değeri" veya "Piyasa değ." yazısını içeriyorsa (Tam eşleşme değil!)
+            if (text.includes("Piyasa değ") || text.includes("Piyasa Değ")) {
                 const val = $(el).next().text().trim() || $(el).parent().children().last().text().trim();
-                if(val) piyasaDegeri = val;
+                if(val && !val.includes("Piyasa")) piyasaDegeri = val;
             }
-            if (text === "Gün aralığı") {
+            if (text.includes("Gün aralığı")) {
                 const val = $(el).next().text().trim() || $(el).parent().children().last().text().trim();
-                if(val) gunAraligi = val;
+                if(val && !val.includes("Gün")) gunAraligi = val;
             }
         });
 
@@ -368,22 +372,18 @@ async function getirHisseGoogle(symbol) {
     return null;
 }
 
-// Ana Borsa Fonksiyonu (Yönetici)
+// Ana Borsa Fonksiyonu
 async function getirHisse(kod) {
     const symbol = kod.toUpperCase().trim();
     
-    // YENİ SIRALAMA: Doviz.com -> Mynet -> Yahoo -> Google
+    // SIRALAMA: Doviz.com -> Mynet -> Yahoo -> Google
     
-    // 1. Doviz.com Dene (Detayları BIST için çok iyidir)
     let sonuc = await getirHisseDoviz(symbol);
 
-    // 2. Mynet Dene (Arama destekli)
     if (!sonuc) sonuc = await getirHisseMynet(symbol);
     
-    // 3. Yahoo JSON API Dene
     if (!sonuc) sonuc = await getirHisseYahooJson(symbol);
     
-    // 4. Google Finance Dene
     if (!sonuc) sonuc = await getirHisseGoogle(symbol);
 
     if (sonuc) {
