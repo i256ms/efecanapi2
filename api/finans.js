@@ -7,7 +7,14 @@ function formatPara(sayi, sembol = "") {
     let maxDigits = 2;
     if (Math.abs(sayi) < 1 && Math.abs(sayi) > 0) maxDigits = 6;
     
-    if (typeof sayi === 'string') return sembol ? `${sayi} ${sembol}` : sayi;
+    // Eğer sayı string olarak geldiyse ("2.50 Mr" veya "₺9.71 - ₺10.20" gibi), olduğu gibi döndür
+    if (typeof sayi === 'string') {
+        // Eğer sembol varsa ve stringin içinde zaten varsa ekleme
+        if (sembol && !sayi.includes(sembol) && !sayi.includes("₺") && !sayi.includes("$")) {
+            return `${sayi} ${sembol}`;
+        }
+        return sayi;
+    }
 
     const formatted = new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: maxDigits }).format(sayi);
     return sembol ? `${formatted} ${sembol}` : formatted;
@@ -229,32 +236,41 @@ async function getirHisseGoogle(symbol) {
         const degisimText = $('.JwB6zf').first().text().replace("%", "").trim();
         const baslik = $('.zzDege').first().text().trim();
         
-        let piyasaDegeri = null;
-        let gunAraligi = null;
-        let hacim = null;
+        let piyasaDegeri = "Veri Yok";
+        let gunAraligi = "Veri Yok";
+        let hacim = "Veri Yok";
 
-        // "Piyasa değeri", "Gün aralığı" gibi yazıların olduğu divleri bul
-        // ve onların hemen yanındaki veya altındaki değerleri çek
+        // Gelişmiş İçerik Tarayıcı
+        // Google'ın grid yapısında etiketler ve değerler genellikle alt alta veya yan yana div'lerdedir.
+        // Etiketi (örn: "Piyasa değeri") bulup, onun ebeveyninin (container) içindeki diğer değeri alıyoruz.
+        
+        const etiketler = {
+            "Piyasa değeri": "pd",
+            "Gün aralığı": "ga",
+            "Hacim": "vol" // Bazen "Ort. hacim" olabilir, contains ile bakarız
+        };
+
         $('div').each((i, el) => {
             const text = $(el).text().trim();
             
-            // Tam eşleşme kontrolü (Etiket: "Piyasa değeri")
-            if (text === "Piyasa değeri" && !piyasaDegeri) {
-                // Değer genelde bir sonraki div'de olur
-                piyasaDegeri = $(el).next().text().trim(); 
-                // Eğer next() boşsa parent'ın son çocuğuna bak
-                if (!piyasaDegeri) piyasaDegeri = $(el).parent().children().last().text().trim();
-            }
-            
-            if (text === "Gün aralığı" && !gunAraligi) {
-                gunAraligi = $(el).next().text().trim();
-                if (!gunAraligi) gunAraligi = $(el).parent().children().last().text().trim();
+            // Eğer metin, aradığımız etiketlerden biriyse
+            if (Object.keys(etiketler).includes(text)) {
+                // Değer genellikle bir sonraki div'de veya aynı parent'ın son çocuğundadır
+                let val = $(el).next().text().trim();
+                
+                // Eğer next() boşsa, parent'ın diğer çocuklarına bak
+                if (!val) {
+                    val = $(el).parent().children().not(el).text().trim();
+                }
+
+                // Hangi veri olduğunu bul ve ata
+                if (text === "Piyasa değeri") piyasaDegeri = val;
+                if (text === "Gün aralığı") gunAraligi = val;
             }
         });
 
-        // Eğer hala boşsa (Bazen Google yapısı grid şeklindedir)
-        // Tablo gibi olan yapıları tara
-        if (!piyasaDegeri || !gunAraligi) {
+        // Alternatif Class Taraması (Yedek)
+        if (piyasaDegeri === "Veri Yok") {
              $('.gyFHrc').each((i, el) => {
                 const label = $(el).find('.mfs7Fc').text().trim();
                 const val = $(el).find('.P6K39c').text().trim();
@@ -269,7 +285,8 @@ async function getirHisseGoogle(symbol) {
             degisim: parseFloat(degisimText.replace(",", ".")),
             baslik: baslik || symbol,
             piyasa_degeri_txt: piyasaDegeri,
-            gun_araligi_txt: gunAraligi
+            gun_araligi_txt: gunAraligi,
+            hacim_txt: hacim // Google detay sayfasında hacim bazen gizlidir
         };
     } catch (e) { console.log("Google fail:", e.message); }
     return null;
@@ -291,10 +308,11 @@ async function getirHisseDoviz(symbol) {
             const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
             const baslik = $('title').text().split('|')[0].trim();
             
-            let hacim = null;
-            let gunAraligi = null;
+            let hacim = "Veri Yok";
+            let gunAraligi = "Veri Yok";
             
             // Doviz.com istatistik satırlarını tara
+            // Yapı: <div class="value-table-row"><div class="label">Hacim (TL)</div><div class="value">500 Mn</div></div>
             $('.value-table-row').each((i, el) => {
                 const label = $(el).find('.label').text().trim(); 
                 const val = $(el).find('.value').text().trim();
@@ -390,6 +408,7 @@ export default async function handler(req, res) {
         }
         else {
             const k = temizKod.toUpperCase();
+            // Genişletilmiş liste
             const dovizler = ["USD", "EUR", "GBP", "GRAM", "ONS", "BRENT", "GUMUS", "DOLAR", "EURO", "ALTIN", "STERLIN", "TAM", "YARIM", "CEYREK", "CUMHURIYET", "ATA", "RESAT", "22AYAR", "14AYAR", "18AYAR", "BILEZIK"];
             
             if (dovizler.includes(k)) {
