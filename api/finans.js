@@ -15,11 +15,12 @@ function getTrendEmoji(degisim) {
     return "⚪"; 
 }
 
-// Ortak Fetch Fonksiyonu (Tarayıcı gibi davranır)
+// Ortak Fetch Fonksiyonu
 async function fetchWithHeaders(url) {
     return await fetch(url, {
         headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9,tr;q=0.8'
         }
     });
 }
@@ -29,15 +30,11 @@ async function getirKripto(sembol) {
     let pair = "";
     try {
         pair = sembol.toUpperCase().trim();
-        
-        // AKILLI PARİTE MANTIĞI
         let ekle = true;
         
-        // Zaten USDT, TRY vb. ile bitiyorsa ekleme
         if (["USDT", "TRY", "EUR", "BUSD", "USDC", "FDUSD"].some(s => pair.endsWith(s) && pair.length > s.length)) {
             ekle = false;
         }
-        // Parite ise (ETHBTC gibi 4 harften uzun ve BTC ile biten) ekleme
         else if (["BTC", "ETH", "BNB"].some(s => pair.endsWith(s)) && pair.length > 4) {
             ekle = false;
         }
@@ -49,17 +46,14 @@ async function getirKripto(sembol) {
         let data = null;
         let kaynak = "Binance";
 
-        // 1. Deneme: BINANCE
         try {
             const urlBinance = `https://api.binance.com/api/v3/ticker/24hr?symbol=${pair}`;
             const resBinance = await fetchWithHeaders(urlBinance);
             if (resBinance.ok) {
                 data = await resBinance.json();
             }
-        } catch (e) { console.log("Binance erişim hatası, yedeğe geçiliyor."); }
+        } catch (e) { console.log("Binance fail"); }
 
-        // 2. Deneme: MEXC (Eğer Binance başarısızsa ve parite USDT ise)
-        // Not: MEXC API yapısı Binance ile birebir aynıdır.
         if (!data && pair.endsWith("USDT")) {
             try {
                 kaynak = "MEXC (Yedek)";
@@ -68,11 +62,11 @@ async function getirKripto(sembol) {
                 if (resMexc.ok) {
                     data = await resMexc.json();
                 }
-            } catch (e) { console.log("Mexc erişim hatası."); }
+            } catch (e) { console.log("Mexc fail"); }
         }
 
         if (!data) {
-            return { hata: true, mesaj: `Coin bulunamadı. (Denenen: ${pair}) - Vercel IP'si engellenmiş olabilir.` };
+            return { hata: true, mesaj: `Coin bulunamadı. (Denenen: ${pair})` };
         }
         
         const fiyat = parseFloat(data.lastPrice);
@@ -148,83 +142,109 @@ async function getirGenelFinans(kod) {
     }
 }
 
-// --- 3. MODÜL: BORSA İSTANBUL (Yahoo Finance + Google Yedek) ---
+// --- 3. MODÜL: BORSA İSTANBUL (Sıralı Deneme: Yahoo -> Google -> Doviz.com) ---
+
 async function getirHisse(kod) {
-    let yahooSymbol = "";
+    const symbol = kod.toUpperCase().trim();
+    let sonuc = null;
+
+    // 1. KAYNAK: YAHOO FINANCE
     try {
-        const symbol = kod.toUpperCase().trim();
-        yahooSymbol = symbol.endsWith(".IS") ? symbol : `${symbol}.IS`;
-        
+        const yahooSymbol = symbol.endsWith(".IS") ? symbol : `${symbol}.IS`;
         const url = `https://finance.yahoo.com/quote/${yahooSymbol}`;
         const response = await fetchWithHeaders(url);
-
-        if (!response.ok) return { hata: true, mesaj: "Borsa verisine ulaşılamadı." };
-
-        const html = await response.text();
-        const $ = cheerio.load(html);
-
-        const fiyatEl = $(`fin-streamer[data-field="regularMarketPrice"][data-symbol="${yahooSymbol}"]`);
-        const fiyatText = fiyatEl.attr('value') || fiyatEl.text();
         
-        const degisimEl = $(`fin-streamer[data-field="regularMarketChangePercent"][data-symbol="${yahooSymbol}"]`);
-        const degisimText = degisimEl.attr('value') || degisimEl.text();
+        if (response.ok) {
+            const html = await response.text();
+            const $ = cheerio.load(html);
+            
+            const fiyatEl = $(`fin-streamer[data-field="regularMarketPrice"][data-symbol="${yahooSymbol}"]`);
+            const fiyatText = fiyatEl.attr('value') || fiyatEl.text();
+            
+            if (fiyatText) {
+                const degisimEl = $(`fin-streamer[data-field="regularMarketChangePercent"][data-symbol="${yahooSymbol}"]`);
+                const degisimText = degisimEl.attr('value') || degisimEl.text();
+                const baslik = $('h1').first().text().replace(" (.IS)", "").trim();
 
-        const baslik = $('h1').first().text().replace(" (.IS)", "").trim();
-
-        if (!fiyatText) {
-            return await getirHisseYedek(symbol);
+                sonuc = {
+                    kaynak: "Yahoo Finance",
+                    fiyat: parseFloat(fiyatText),
+                    degisim: parseFloat(degisimText),
+                    baslik: baslik || symbol
+                };
+            }
         }
+    } catch (e) { console.log("Yahoo fail"); }
 
-        const fiyat = parseFloat(fiyatText);
-        const degisim = parseFloat(degisimText);
-
-        return {
-            tur: "Borsa İstanbul",
-            sembol: symbol,
-            baslik: baslik || symbol,
-            fiyat: formatPara(fiyat) + " TL",
-            degisim_yuzde: degisim.toFixed(2),
-            degisim_emoji: getTrendEmoji(degisim),
-            kaynak: "Yahoo Finance"
-        };
-
-    } catch (e) {
-        return { hata: true, mesaj: `Hisse verisi alınamadı (${yahooSymbol}).` };
+    // 2. KAYNAK: GOOGLE FINANCE (Eğer Yahoo olmadıysa)
+    if (!sonuc) {
+        try {
+            const url = `https://www.google.com/finance/quote/${symbol}:IST`;
+            const response = await fetchWithHeaders(url);
+            
+            if (response.ok) {
+                const html = await response.text();
+                const $ = cheerio.load(html);
+                
+                const fiyatText = $('.YMlKec.fxKbKc').first().text().replace("₺", "").trim();
+                if (fiyatText) {
+                    const degisimText = $('.JwB6zf').first().text().replace("%", "").trim();
+                    const baslik = $('.zzDege').first().text().trim();
+                    
+                    sonuc = {
+                        kaynak: "Google Finance",
+                        fiyat: parseFloat(fiyatText.replace(",", ".")),
+                        degisim: parseFloat(degisimText.replace(",", ".")),
+                        baslik: baslik || symbol
+                    };
+                }
+            }
+        } catch (e) { console.log("Google fail"); }
     }
-}
 
-async function getirHisseYedek(kod) {
-    try {
-        const symbol = kod.toUpperCase().trim();
-        const url = `https://www.google.com/finance/quote/${symbol}:IST`;
-        const response = await fetchWithHeaders(url);
-        
-        if (!response.ok) return { hata: true, mesaj: `${symbol} kodlu hisse bulunamadı.` };
+    // 3. KAYNAK: DOVIZ.COM (Yerli ve Milli Yedek - BIST için çok sağlamdır)
+    if (!sonuc) {
+        try {
+            const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
+            const response = await fetchWithHeaders(url);
+            
+            if (response.ok) {
+                const html = await response.text();
+                const $ = cheerio.load(html);
+                
+                // Doviz.com selector (Genelde .text-4xl classı fiyatı tutar)
+                const fiyatText = $('div[class*="text-4xl"]').first().text().trim();
+                
+                if (fiyatText) {
+                    // Değişim oranı genelde yanında olur veya renkli class'tadır
+                    const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
+                    // Başlık için title veya header
+                    const baslik = $('title').text().split('|')[0].trim(); // "THY Hisse Fiyatı..." gibi
 
-        const html = await response.text();
-        const $ = cheerio.load(html);
+                    sonuc = {
+                        kaynak: "Doviz.com",
+                        fiyat: parseFloat(fiyatText.replace(",", ".")),
+                        degisim: parseFloat(degisimText.replace(",", ".")),
+                        baslik: baslik || symbol
+                    };
+                }
+            }
+        } catch (e) { console.log("Doviz.com fail"); }
+    }
 
-        const fiyatText = $('.YMlKec.fxKbKc').first().text().replace("₺", "").trim();
-        const degisimText = $('.JwB6zf').first().text().replace("%", "").trim();
-        const baslik = $('.zzDege').first().text().trim();
-
-        if (!fiyatText) return { hata: true, mesaj: `${symbol} bulunamadı.` };
-
-        const fiyat = parseFloat(fiyatText.replace(",", "."));
-        const degisim = parseFloat(degisimText.replace(",", "."));
-
+    // SONUÇ DÖNDÜRME
+    if (sonuc) {
         return {
             tur: "Borsa İstanbul",
             sembol: symbol,
-            baslik: baslik || symbol,
-            fiyat: formatPara(fiyat) + " TL",
-            degisim_yuzde: degisim.toFixed(2),
-            degisim_emoji: getTrendEmoji(degisim),
-            kaynak: "Google Finance"
+            baslik: sonuc.baslik,
+            fiyat: formatPara(sonuc.fiyat) + " TL",
+            degisim_yuzde: sonuc.degisim.toFixed(2),
+            degisim_emoji: getTrendEmoji(sonuc.degisim),
+            kaynak: sonuc.kaynak
         };
-
-    } catch (e) {
-        return { hata: true, mesaj: "Hisse bulunamadı." };
+    } else {
+        return { hata: true, mesaj: `Hisse verisi 3 kaynaktan da çekilemedi (${symbol}).` };
     }
 }
 
@@ -256,7 +276,6 @@ export default async function handler(req, res) {
         }
         else {
             const k = temizKod.toUpperCase();
-            
             const dovizler = ["USD", "EUR", "GBP", "GRAM", "ONS", "BRENT", "GUMUS", "DOLAR", "EURO", "ALTIN", "STERLIN"];
             
             if (dovizler.includes(k)) {
@@ -266,10 +285,12 @@ export default async function handler(req, res) {
                 sonuc = await getirKripto(temizKod);
             }
             else {
+                // Önce Borsa dene
                 let borsaDene = await getirHisse(temizKod);
                 if (!borsaDene.hata) {
                     sonuc = borsaDene;
                 } else {
+                    // Bulamazsa Kripto dene
                     sonuc = await getirKripto(temizKod);
                 }
             }
