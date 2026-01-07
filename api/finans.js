@@ -18,23 +18,29 @@ function getTrendEmoji(degisim) {
 
 // --- 1. MODÜL: KRİPTO PARA (Binance) ---
 async function getirKripto(sembol) {
+    let pair = "";
     try {
-        let pair = sembol.toUpperCase();
+        pair = sembol.toUpperCase().trim();
         
         // AKILLI PARİTE KONTROLÜ
-        // Kullanıcı "BTC" yazdıysa "BTCUSDT" yapmalıyız.
-        // Ama "ETHBTC" yazdıysa dokunmamalıyız.
-        
         let ekle = true;
 
-        // 1. Zaten bir itibari para veya stabil coin ile bitiyorsa ekleme yapma
-        if (pair.endsWith("USDT") || pair.endsWith("TRY") || pair.endsWith("EUR") || pair.endsWith("BUSD") || pair.endsWith("USDC")) {
+        // İstisna: "USDT" girilirse USDTTRY yapalım
+        if (pair === "USDT") {
+            pair = "USDTTRY";
             ekle = false;
-        }
-        // 2. Eğer BTC, ETH, BNB ile bitiyorsa ama uzunluğu 4'ten büyükse (örn: ETHBTC -> 6 harf), bu bir paritedir, ekleme yapma.
-        // Ama "BTC" (3 harf) veya "WBTC" (4 harf) ise bunlar coindir, sonuna USDT eklenmelidir.
-        else if ((pair.endsWith("BTC") || pair.endsWith("ETH") || pair.endsWith("BNB")) && pair.length > 4) {
-            ekle = false;
+        } else {
+            // 1. Sonu itibari para veya stabil coin ile bitiyorsa ekleme yapma (USDT, TRY, EUR, BUSD, USDC, FDUSD)
+            // Ancak sembolün kendisi bu coinlerden biri olmamalı (örn: sadece "TRY" girerse bozulmasın)
+            if (["USDT", "TRY", "EUR", "BUSD", "USDC", "FDUSD"].some(s => pair.endsWith(s) && pair.length > s.length)) {
+                ekle = false;
+            }
+            // 2. Kripto Bazlı Pariteler (BTC, ETH, BNB)
+            // ETHBTC (6 harf) -> Parite. BTC (3 harf) -> Coin. WBTC (4 harf) -> Coin.
+            // Bu yüzden uzunluk kontrolü kritik. 4 harften uzunsa parite kabul et.
+            else if (["BTC", "ETH", "BNB"].some(s => pair.endsWith(s)) && pair.length > 4) {
+                ekle = false;
+            }
         }
 
         if (ekle) {
@@ -44,14 +50,13 @@ async function getirKripto(sembol) {
         const url = `https://api.binance.com/api/v3/ticker/24hr?symbol=${pair}`;
         const response = await fetch(url);
         
-        if (!response.ok) return { hata: true, mesaj: "Coin bulunamadı." };
+        if (!response.ok) return { hata: true, mesaj: `Coin bulunamadı. (Denenen: ${pair})` };
         
         const data = await response.json();
         const fiyat = parseFloat(data.lastPrice);
         
-        // Kriptoda virgülden sonraki basamak sayısı fiyata göre değişsin
         let fiyatStr = formatPara(fiyat);
-        if (fiyat < 1) fiyatStr = fiyat.toFixed(6); // PEPE, SHIB gibi coinler için
+        if (fiyat < 1) fiyatStr = fiyat.toFixed(6); 
 
         return {
             tur: "Kripto Para",
@@ -64,7 +69,7 @@ async function getirKripto(sembol) {
             hacim: formatPara(data.quoteVolume) + " USDT"
         };
     } catch (e) {
-        return { hata: true, mesaj: "Binance verisine ulaşılamadı." };
+        return { hata: true, mesaj: `Binance hatası: ${e.message} (Pair: ${pair})` };
     }
 }
 
@@ -77,7 +82,7 @@ async function getirGenelFinans(kod) {
         if (!response.ok) return { hata: true, mesaj: "Finans servisine ulaşılamadı." };
         
         const data = await response.json();
-        const aranan = kod.toUpperCase();
+        const aranan = kod.toUpperCase().trim();
         
         // Eşleştirmeler
         let key = "";
@@ -87,7 +92,7 @@ async function getirGenelFinans(kod) {
         else if (aranan === "ALTIN" || aranan === "GRAM" || aranan === "GRAM-ALTIN") key = "gram-altin";
         else if (aranan === "CEYREK") key = "ceyrek-altin";
         else if (aranan === "ONS") key = "ons";
-        else if (aranan === "BRENT") key = "brent-petrol";
+        else if (aranan === "BRENT" || aranan === "PETROL") key = "brent-petrol";
         else if (aranan === "GUMUS") key = "gumus";
         else key = aranan;
 
@@ -96,7 +101,7 @@ async function getirGenelFinans(kod) {
         if (!veri) {
             return { 
                 hata: true, 
-                mesaj: "Bu veri bulunamadı. Örn: USD, GRAM, ONS",
+                mesaj: `Bu veri bulunamadı (${aranan}). Örn: USD, GRAM, ONS`,
                 mevcut_kodlar: ["USD", "EUR", "GRAM", "CEYREK", "ONS", "BRENT"]
             };
         }
@@ -123,10 +128,10 @@ async function getirGenelFinans(kod) {
 
 // --- 3. MODÜL: BORSA İSTANBUL (Yahoo Finance) ---
 async function getirHisse(kod) {
+    let yahooSymbol = "";
     try {
-        const symbol = kod.toUpperCase();
-        // Yahoo Finance'de BIST hisseleri .IS uzantısı alır (Örn: THYAO.IS)
-        const yahooSymbol = symbol.endsWith(".IS") ? symbol : `${symbol}.IS`;
+        const symbol = kod.toUpperCase().trim();
+        yahooSymbol = symbol.endsWith(".IS") ? symbol : `${symbol}.IS`;
         
         const url = `https://finance.yahoo.com/quote/${yahooSymbol}`;
         
@@ -151,7 +156,6 @@ async function getirHisse(kod) {
         const baslik = $('h1').first().text().replace(" (.IS)", "").trim();
 
         if (!fiyatText) {
-            // Eğer Yahoo'da bulamazsak Google Finance deneyelim (Yedek)
             return await getirHisseYedek(symbol);
         }
 
@@ -170,14 +174,14 @@ async function getirHisse(kod) {
 
     } catch (e) {
         console.error(e);
-        return { hata: true, mesaj: "Hisse verisi alınamadı." };
+        return { hata: true, mesaj: `Hisse verisi alınamadı (${yahooSymbol}).` };
     }
 }
 
 // --- YEDEK BORSA MODÜLÜ (Google Finance) ---
 async function getirHisseYedek(kod) {
     try {
-        const symbol = kod.toUpperCase();
+        const symbol = kod.toUpperCase().trim();
         const url = `https://www.google.com/finance/quote/${symbol}:IST`;
         
         const response = await fetch(url, {
@@ -227,41 +231,50 @@ export default async function handler(req, res) {
 
     let sonuc = {};
 
-    // 1. Manuel Tür Seçimi
-    if (tur === "kripto" || tur === "coin") {
-        sonuc = await getirKripto(kod);
-    } 
-    else if (tur === "borsa" || tur === "hisse") {
-        sonuc = await getirHisse(kod);
-    }
-    else if (tur === "doviz" || tur === "altin" || tur === "emtia") {
-        sonuc = await getirGenelFinans(kod);
-    }
-    // 2. Akıllı Tahmin Modu
-    else {
-        const k = kod.toUpperCase();
-        
-        const dovizler = ["USD", "EUR", "GBP", "GRAM", "ONS", "BRENT", "GUMUS", "DOLAR", "EURO", "ALTIN", "STERLIN"];
-        
-        if (dovizler.includes(k)) {
-            sonuc = await getirGenelFinans(kod);
+    try {
+        const temizKod = kod.trim();
+
+        // 1. Manuel Tür Seçimi
+        if (tur === "kripto" || tur === "coin") {
+            sonuc = await getirKripto(temizKod);
+        } 
+        else if (tur === "borsa" || tur === "hisse") {
+            sonuc = await getirHisse(temizKod);
         }
-        else if (k.endsWith("USDT") || k.endsWith("TRY") || ["BTC", "ETH", "SOL", "XRP", "AVAX", "DOGE"].includes(k)) {
-            sonuc = await getirKripto(kod);
+        else if (tur === "doviz" || tur === "altin" || tur === "emtia") {
+            sonuc = await getirGenelFinans(temizKod);
         }
+        // 2. Akıllı Tahmin Modu
         else {
-            let borsaDene = await getirHisse(kod);
-            if (!borsaDene.hata) {
-                sonuc = borsaDene;
-            } else {
-                sonuc = await getirKripto(kod);
+            const k = temizKod.toUpperCase();
+            
+            const dovizler = ["USD", "EUR", "GBP", "GRAM", "ONS", "BRENT", "GUMUS", "DOLAR", "EURO", "ALTIN", "STERLIN"];
+            
+            if (dovizler.includes(k)) {
+                sonuc = await getirGenelFinans(temizKod);
+            }
+            // Kripto Belirteçleri
+            else if (k.endsWith("USDT") || k.endsWith("TRY") || ["BTC", "ETH", "SOL", "XRP", "AVAX", "DOGE"].includes(k)) {
+                sonuc = await getirKripto(temizKod);
+            }
+            else {
+                // Önce Borsa dene
+                let borsaDene = await getirHisse(temizKod);
+                if (!borsaDene.hata) {
+                    sonuc = borsaDene;
+                } else {
+                    // Bulamazsa Kripto dene
+                    sonuc = await getirKripto(temizKod);
+                }
             }
         }
-    }
 
-    if (sonuc.hata) {
-        return res.status(404).json(sonuc);
-    }
+        if (sonuc.hata) {
+            return res.status(404).json(sonuc);
+        }
 
-    res.status(200).json(sonuc);
+        res.status(200).json(sonuc);
+    } catch (err) {
+        res.status(500).json({ hata: true, mesaj: "Sunucu hatası", detay: err.message });
+    }
 }
