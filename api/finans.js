@@ -5,9 +5,11 @@ import * as cheerio from 'cheerio';
 function formatPara(sayi, sembol = "") {
     if (sayi === null || sayi === undefined) return "Veri Yok";
     
-    // Eğer sayı zaten string ise ve içinde sembol/virgül varsa direkt döndür
+    // String geldiyse temizle ve sayıya çevir
     if (typeof sayi === 'string') {
-        if (sayi.includes(",") || sayi.includes("Veri")) return sayi;
+        if (sayi.includes("Veri") || sayi.includes("Yok")) return "Veri Yok";
+        // Zaten formatlıysa (1.234,56) dokunma, sadece sembol ekle
+        if (sayi.includes(",")) return sembol && !sayi.includes(sembol) ? `${sayi} ${sembol}` : sayi;
         sayi = parseFloat(sayi);
     }
 
@@ -19,7 +21,7 @@ function formatPara(sayi, sembol = "") {
 }
 
 function formatHacim(sayi) {
-    if (!sayi) return "Veri Yok";
+    if (!sayi && sayi !== 0) return "Veri Yok";
     if (typeof sayi === 'string') return sayi; 
     
     if (sayi >= 1.0e+9) return (sayi / 1.0e+9).toFixed(2).replace(".", ",") + " Mr";
@@ -182,13 +184,12 @@ async function getirGenelFinans(kod) {
     }
 }
 
-// --- 3. MODÜL: BORSA İSTANBUL (JSON API + Doviz.com Yedek) ---
+// --- 3. MODÜL: BORSA İSTANBUL (JSON API + Mynet + Google) ---
 
-// 1. YAHOO FINANCE JSON API (En Garanti Yöntem)
+// 1. YAHOO FINANCE JSON API (En Hızlı)
 async function getirHisseYahooJson(symbol) {
     try {
         const yahooSymbol = symbol.endsWith(".IS") ? symbol : `${symbol}.IS`;
-        // Bu endpoint doğrudan JSON döner, HTML parselleme derdi yok!
         const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yahooSymbol}`;
         
         const response = await fetchWithHeaders(url);
@@ -200,7 +201,7 @@ async function getirHisseYahooJson(symbol) {
         if (!data) return null;
 
         return {
-            kaynak: "Yahoo Finance API",
+            kaynak: "Yahoo Finance",
             fiyat: data.regularMarketPrice,
             degisim: data.regularMarketChangePercent,
             baslik: data.longName || data.shortName || symbol,
@@ -214,52 +215,74 @@ async function getirHisseYahooJson(symbol) {
     return null;
 }
 
-// 2. DOVIZ.COM Scraper (Yerli ve Detaylı Yedek)
-async function getirHisseDoviz(symbol) {
+// 2. MYNET FİNANS (Yeni & Güçlü Yedek)
+async function getirHisseMynet(symbol) {
     try {
-        const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
-        const response = await fetchWithHeaders(url);
-        if (!response.ok) return null;
+        // Adım 1: Arama API'sinden doğru URL'yi (slug) bul
+        const searchUrl = `https://finans.mynet.com/api/search/searchall?term=${symbol}`;
+        const searchRes = await fetchWithHeaders(searchUrl);
+        if (!searchRes.ok) return null;
+        
+        const searchData = await searchRes.json();
+        // Hisseler dizisinden sembolü tam eşleşen veya slug'ı içeren ilk sonucu al
+        const hisse = searchData.stocks?.find(s => s.slug.toUpperCase().includes(symbol)) || searchData.stocks?.[0];
+        
+        if (!hisse) return null;
 
-        const html = await response.text();
+        // Adım 2: Detay Sayfasına Git
+        const detailUrl = `https://finans.mynet.com/borsa/hisseler/${hisse.slug}/`;
+        const htmlRes = await fetchWithHeaders(detailUrl);
+        const html = await htmlRes.text();
         const $ = cheerio.load(html);
-        
-        const fiyatText = $('div[class*="text-4xl"]').first().text().trim();
-        
-        if (fiyatText) {
-            const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
-            const baslik = $('title').text().split('|')[0].trim();
-            
-            let hacim = null;
-            let gunAraligi = null;
-            let piyasaDegeri = null;
-            
-            // Tablodaki verileri tara
-            $('.value-table-row').each((i, el) => {
-                const label = $(el).find('.label').text().trim(); 
-                const val = $(el).find('.value').text().trim();
-                
-                if (label.includes("Hacim")) hacim = val; // Örn: 13.5 Mn
-                if (label.includes("Gün Aralığı")) gunAraligi = val; // Örn: 12.40 - 13.00
-                if (label.includes("Piyasa Değeri")) piyasaDegeri = val;
-            });
 
-            // Doviz.com'da sayılar string olarak gelir ("12,50"), sayıya çeviriyoruz
-            return {
-                kaynak: "Doviz.com",
-                fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
-                degisim: parseFloat(degisimText.replace(",", ".")),
-                baslik: baslik || symbol,
-                hacim_txt: hacim,
-                gun_araligi_txt: gunAraligi,
-                piyasa_degeri_txt: piyasaDegeri
-            };
+        // Mynet Seçicileri (Genellikle liste yapısı vardır)
+        const fiyatText = $('li[data-id] span').first().text().replace(",", "."); // Ana fiyat bazen dinamik yüklenir
+        
+        // Eğer dinamik alandan gelmezse statik tablodan al
+        let fiyat = 0;
+        let degisim = 0;
+        let hacim = null;
+        let piyasaDegeri = null;
+        let gunAraligi = null;
+
+        // Mynet detay listesi (flex list)
+        $('.flex-list-item').each((i, el) => {
+            const label = $(el).find('span').first().text().trim();
+            const val = $(el).find('span').last().text().trim();
+            
+            if (label.includes("Son Fiyat")) fiyat = parseFloat(val.replace(",", "."));
+            if (label.includes("Değişim (%)")) degisim = parseFloat(val.replace(",", "."));
+            if (label.includes("Hacim (TL)")) hacim = val;
+            if (label.includes("Piyasa Değeri")) piyasaDegeri = val;
+            if (label.includes("Gün Aralığı")) gunAraligi = val;
+        });
+
+        // Başlık
+        const baslik = $('h1').text().trim() || hisse.name;
+
+        // Eğer fiyatı listeden bulamadıysak header'dan dene
+        if (!fiyat) {
+             const headerFiyat = $('.company-info-current-price').text().trim().split(' ')[0];
+             if(headerFiyat) fiyat = parseFloat(headerFiyat.replace(",", "."));
         }
-    } catch (e) { console.log("Doviz.com fail:", e.message); }
+
+        if (!fiyat) return null;
+
+        return {
+            kaynak: "Mynet Finans",
+            fiyat: fiyat,
+            degisim: degisim,
+            baslik: baslik,
+            hacim_txt: hacim,
+            piyasa_degeri_txt: piyasaDegeri,
+            gun_araligi_txt: gunAraligi
+        };
+
+    } catch (e) { console.log("Mynet fail:", e.message); }
     return null;
 }
 
-// 3. GOOGLE FINANCE (Son Çare)
+// 3. GOOGLE FINANCE (Son Çare - İyileştirilmiş)
 async function getirHisseGoogle(symbol) {
     try {
         const url = `https://www.google.com/finance/quote/${symbol}:IST`;
@@ -275,19 +298,19 @@ async function getirHisseGoogle(symbol) {
         const degisimText = $('.JwB6zf').first().text().replace("%", "").trim();
         const baslik = $('.zzDege').first().text().trim();
         
-        // Akıllı Tarama
-        let piyasaDegeri = "Veri Yok";
-        let gunAraligi = "Veri Yok";
+        let piyasaDegeri = null;
+        let gunAraligi = null;
 
+        // İçerik tabanlı arama (Class bağımsız)
         $('div').each((i, el) => {
             const text = $(el).text().trim();
-            if (text === "Piyasa değeri") {
-                const val = $(el).next().text().trim() || $(el).parent().children().last().text().trim();
-                if(val) piyasaDegeri = val;
-            }
-            if (text === "Gün aralığı") {
-                const val = $(el).next().text().trim() || $(el).parent().children().last().text().trim();
-                if(val) gunAraligi = val;
+            // "Piyasa değeri" yazısını bul, parent'ın içindeki diğer metinleri tara
+            if (text === "Piyasa değeri" || text === "Gün aralığı") {
+                const parentText = $(el).parent().text(); // "Piyasa değeri2,50 Mr"
+                const cleanVal = parentText.replace(text, "").trim();
+                
+                if (text === "Piyasa değeri") piyasaDegeri = cleanVal;
+                if (text === "Gün aralığı") gunAraligi = cleanVal;
             }
         });
 
@@ -307,13 +330,13 @@ async function getirHisseGoogle(symbol) {
 async function getirHisse(kod) {
     const symbol = kod.toUpperCase().trim();
     
-    // 1. Önce Yahoo JSON API Dene (En temiz veri)
+    // 1. Yahoo JSON API (En Hızlı)
     let sonuc = await getirHisseYahooJson(symbol);
     
-    // 2. Olmazsa Doviz.com Dene (Detayları iyidir)
-    if (!sonuc) sonuc = await getirHisseDoviz(symbol);
+    // 2. Mynet (Yeni - Detaylı)
+    if (!sonuc) sonuc = await getirHisseMynet(symbol);
     
-    // 3. O da olmazsa Google Finance Dene
+    // 3. Google Finance (Yedek)
     if (!sonuc) sonuc = await getirHisseGoogle(symbol);
 
     if (sonuc) {
@@ -339,7 +362,7 @@ async function getirHisse(kod) {
             baslik: sonuc.baslik,
             kaynak: sonuc.kaynak,
             fiyat: formatPara(sonuc.fiyat, "TL"),
-            degisim_yuzde: sonuc.degisim.toFixed(2),
+            degisim_yuzde: sonuc.degisim ? sonuc.degisim.toFixed(2) : "0.00",
             degisim_emoji: getTrendEmoji(sonuc.degisim),
             gun_araligi: gunAraligiFinal,
             hacim: hacimFinal,
