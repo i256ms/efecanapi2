@@ -1,0 +1,12 @@
+{
+  "name": "discord-bot-api",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Finans ve araclar",
+  "dependencies": {
+    "rss-parser": "^3.13.0",
+    "@vitalets/google-translate-api": "^9.2.0",
+    "genius-lyrics": "^4.4.7",
+    "cheerio": "^1.0.0-rc.12"
+  }
+}
