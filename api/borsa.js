@@ -5,19 +5,16 @@ import * as cheerio from 'cheerio';
 function formatPara(sayi, sembol = "") {
     if (sayi === null || sayi === undefined) return "Veri Yok";
     
-    // Eğer sayı string ise ve içinde "Veri Yok" varsa
     if (typeof sayi === 'string') {
         if (sayi.includes("Veri") || sayi.includes("Yok")) return "Veri Yok";
         // Zaten formatlıysa (1.234,56)
         if (sayi.includes(",") && !sayi.includes(".")) {
-             // Sadece sembol ekle
              return sembol && !sayi.includes(sembol) ? `${sayi} ${sembol}` : sayi;
         }
-        // Temizle ve float yap (1.234,56 -> 1234.56)
         sayi = parseFloat(sayi.replace(/\./g, "").replace(",", "."));
     }
 
-    if (isNaN(sayi)) return "Hata";
+    if (isNaN(sayi)) return "Veri Yok";
 
     let maxDigits = 2;
     if (Math.abs(sayi) < 1 && Math.abs(sayi) > 0) maxDigits = 6;
@@ -29,10 +26,8 @@ function formatPara(sayi, sembol = "") {
 function formatHacim(sayi) {
     if (!sayi || sayi === "Veri Yok") return "Veri Yok";
     
-    // String ise ve içinde harf varsa (Mn, Mr) dokunma
     if (typeof sayi === 'string' && /[a-zA-Z]/.test(sayi)) return sayi;
     
-    // String sayı ise temizle
     if (typeof sayi === 'string') sayi = parseFloat(sayi.replace(/\./g, "").replace(",", "."));
 
     if (isNaN(sayi)) return "Veri Yok";
@@ -55,109 +50,139 @@ async function fetchWithHeaders(url) {
     return await fetch(url, {
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7'
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Referer': 'https://www.google.com/',
+            'Cache-Control': 'no-cache'
         }
     });
 }
 
-// --- TEK VE ANA KAYNAK: DOVİZ.COM ---
+// --- KAYNAK 1: DOVİZ.COM ---
 async function getirHisseDoviz(symbol) {
     const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
-    const debugInfo = { url: url, adimlar: [] };
+    const debug = { url: url, adimlar: [] };
 
     try {
         const response = await fetchWithHeaders(url);
-        debugInfo.adimlar.push(`HTTP Durumu: ${response.status}`);
+        debug.adimlar.push(`HTTP: ${response.status}`);
         
-        if (!response.ok) {
-            return { hata: true, mesaj: `Doviz.com'da sayfa bulunamadı (404). Kod: ${symbol}`, debug: debugInfo };
-        }
+        if (!response.ok) return null;
 
         const html = await response.text();
+        // Boş response kontrolü
+        if (!html || html.length < 500) {
+            debug.adimlar.push("HTML İçeriği çok kısa veya boş (Bloklandı).");
+            return null;
+        }
+
         const $ = cheerio.load(html);
         
-        // Debug: Sayfa başlığını al
-        const pageTitle = $('title').text();
-        debugInfo.adimlar.push(`Sayfa Başlığı: ${pageTitle}`);
-
-        // --- SEÇİCİLERİ DENİYORUZ ---
+        let fiyatText = $('div[data-socket-key="' + symbol + '"]').text().trim();
+        if (!fiyatText) fiyatText = $('div[class*="text-4xl"]').first().text().trim();
         
-        let fiyatText = null;
-        let yontem = "";
-
-        // 1. Yöntem: data-socket-key (En güvenilir)
-        const socketEl = $('div[data-socket-key="' + symbol + '"]');
-        if (socketEl.length > 0) {
-            fiyatText = socketEl.text().trim();
-            yontem = "Socket Key";
-        }
-
-        // 2. Yöntem: data-socket-key (Küçük harf dene)
-        if (!fiyatText) {
-            const socketElKucuk = $('div[data-socket-key="' + symbol.toLowerCase() + '"]');
-            if (socketElKucuk.length > 0) {
-                fiyatText = socketElKucuk.text().trim();
-                yontem = "Socket Key (Küçük Harf)";
-            }
-        }
-
-        // 3. Yöntem: Büyük punto (text-4xl) - Genelde fiyat en büyük yazıdır
-        if (!fiyatText) {
-            fiyatText = $('div[class*="text-4xl"]').first().text().trim();
-            yontem = "CSS Class (text-4xl)";
-        }
-
-        // 4. Yöntem: Itemprop
-        if (!fiyatText) {
-            fiyatText = $('span[itemprop="price"]').text().trim();
-            yontem = "Itemprop Price";
-        }
-
-        debugInfo.adimlar.push(`Fiyat Bulma Yöntemi: ${yontem || "BAŞARISIZ"}`);
-        debugInfo.adimlar.push(`Ham Fiyat Verisi: ${fiyatText || "YOK"}`);
-
         if (fiyatText) {
-            // Değişim Oranı
-            let degisimText = $('div[data-socket-key="' + symbol + '"]').parent().find('div[class*="text-md"]').text().trim();
-            if (!degisimText) degisimText = $('div[class*="text-4xl"]').parent().find('div[class*="text-md"]').text().trim();
+            const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
+            const baslik = $('title').text().split('|')[0].trim();
             
-            // Başlık
-            const baslik = $('h1').first().text().trim() || pageTitle.split('|')[0].trim();
-            
-            // Detaylar (Hacim, Piyasa Değeri vb.)
             let hacim = null;
             let gunAraligi = null;
             let piyasaDegeri = null;
             
-            // Tabloyu tara
             $('.value-table-row').each((i, el) => {
                 const label = $(el).find('.label').text().trim(); 
                 const val = $(el).find('.value').text().trim();
-                
                 if (label.includes("Hacim")) hacim = val;
                 if (label.includes("Gün Aralığı")) gunAraligi = val;
                 if (label.includes("Piyasa Değeri")) piyasaDegeri = val;
             });
 
-            debugInfo.adimlar.push("Veriler ayrıştırıldı.");
-
             return {
                 kaynak: "Doviz.com",
                 fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
-                degisim: parseFloat(degisimText.replace("%", "").replace(",", ".")) || 0,
+                degisim: parseFloat(degisimText.replace(",", ".")),
                 baslik: baslik || symbol,
                 hacim_txt: hacim,
                 gun_araligi_txt: gunAraligi,
-                piyasa_degeri_txt: piyasaDegeri,
-                debug: debugInfo
+                piyasa_degeri_txt: piyasaDegeri
             };
-        } else {
-            return { hata: true, mesaj: `Fiyat alanı sayfada bulunamadı.`, debug: debugInfo };
+        }
+    } catch (e) { console.log("Doviz.com fail"); }
+    return null;
+}
+
+// --- KAYNAK 2: BIGPARA (Akıllı API Destekli) ---
+async function getirHisseBigpara(symbol) {
+    try {
+        // 1. Adım: Bigpara API'den hissenin doğru URL slug'ını bul
+        const searchUrl = `https://bigpara.hurriyet.com.tr/api/v1/search/kripto-borsa-doviz-hisse?query=${symbol}`;
+        const searchRes = await fetchWithHeaders(searchUrl);
+        
+        if (!searchRes.ok) return null;
+        
+        const searchJson = await searchRes.json();
+        // Gelen listeden tam eşleşeni veya ilk hisseyi bul
+        const hisse = searchJson.data?.find(d => d.type === "Hisse") || searchJson.data?.[0];
+        
+        if (!hisse || !hisse.slug) return null;
+
+        // 2. Adım: Detay sayfasına git
+        const detailUrl = `https://bigpara.hurriyet.com.tr/borsa/hisse-fiyatlari/${hisse.slug}-detay/`;
+        const htmlRes = await fetchWithHeaders(detailUrl);
+        const html = await htmlRes.text();
+        const $ = cheerio.load(html);
+
+        // Bigpara Seçicileri
+        // Fiyat: .price-container .value veya .proDetail .priceBox .price
+        const fiyatText = $('.price-container .value').first().text().trim() || 
+                          $('.proDetail .priceBox .price').first().text().trim();
+        
+        if (fiyatText) {
+            const degisimText = $('.price-container .rate').first().text().replace("%", "").trim() ||
+                                $('.proDetail .priceBox .dir').first().text().replace("%", "").trim();
+            
+            // Yön kontrolü (Düşüşte mi?)
+            const isDown = $('.price-container .rate').hasClass('down') || $('.proDetail .priceBox .dir').hasClass('down');
+            let degisim = parseFloat(degisimText.replace(",", "."));
+            if (isDown) degisim = -Math.abs(degisim);
+
+            const baslik = $('h1').first().text().trim();
+
+            // Detaylar
+            let hacim = null;
+            let gunDusuk = null;
+            let gunYuksek = null;
+            let piyasaDegeri = null;
+
+            // Bigpara detay kutuları
+            $('.detail-item').each((i, el) => {
+                const label = $(el).find('.label').text().trim();
+                const val = $(el).find('.value').text().trim();
+                
+                if (label.includes("Hacim")) hacim = val;
+                if (label.includes("Piyasa Değeri")) piyasaDegeri = val;
+                if (label.includes("Günlük Aralık")) {
+                    const parts = val.split('-');
+                    if (parts.length === 2) {
+                        gunDusuk = parts[0].trim();
+                        gunYuksek = parts[1].trim();
+                    }
+                }
+            });
+
+            return {
+                kaynak: "Bigpara",
+                fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
+                degisim: degisim,
+                baslik: baslik || symbol,
+                hacim_txt: hacim,
+                gun_araligi_txt: gunDusuk && gunYuksek ? `${gunDusuk} - ${gunYuksek}` : "Veri Yok",
+                piyasa_degeri_txt: piyasaDegeri
+            };
         }
 
-    } catch (e) { 
-        return { hata: true, mesaj: `Bağlantı hatası: ${e.message}`, debug: debugInfo };
-    }
+    } catch (e) { console.log("Bigpara fail:", e.message); }
+    return null;
 }
 
 // --- ANA YÖNETİCİ ---
@@ -173,10 +198,14 @@ export default async function handler(req, res) {
 
     const symbol = kod.toUpperCase().trim();
     
-    // SADECE DOVİZ.COM ÇAĞIRIYORUZ
+    // STRATEJİ: Önce Doviz.com, Olmazsa Bigpara
     let sonuc = await getirHisseDoviz(symbol);
+    
+    if (!sonuc) {
+        sonuc = await getirHisseBigpara(symbol);
+    }
 
-    if (sonuc && !sonuc.hata) {
+    if (sonuc) {
         res.status(200).json({
             tur: "Borsa İstanbul",
             sembol: symbol,
@@ -188,14 +217,15 @@ export default async function handler(req, res) {
             degisim_emoji: getTrendEmoji(sonuc.degisim),
             
             gun_araligi: sonuc.gun_araligi_txt || "Veri Yok",
-            hacim: sonuc.hacim_txt || "Veri Yok",
-            piyasa_degeri: sonuc.piyasa_degeri_txt || "Veri Yok",
-            
-            // Eğer istersen debug bilgisini gizleyebilirsin ama şu an görmek için açık
-            _debug: sonuc.debug 
+            hacim: formatHacim(sonuc.hacim_txt),
+            piyasa_degeri: formatHacim(sonuc.piyasa_degeri_txt)
         });
     } else {
-        // Hata durumunda detaylı rapor dönüyoruz
-        res.status(404).json(sonuc || { hata: true, mesaj: "Bilinmeyen hata." });
+        // İki kaynak da patladıysa
+        res.status(404).json({ 
+            hata: true, 
+            mesaj: `Hisse verisi Doviz.com ve Bigpara'dan çekilemedi (${symbol}).`,
+            sebep: "Sunucu IP'si engellenmiş veya hisse kodu hatalı olabilir."
+        });
     }
 }
