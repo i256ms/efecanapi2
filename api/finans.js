@@ -20,8 +20,24 @@ function getTrendEmoji(degisim) {
 async function getirKripto(sembol) {
     try {
         let pair = sembol.toUpperCase();
-        // Basit düzeltmeler
-        if (!pair.endsWith("USDT") && !pair.endsWith("TRY") && !pair.endsWith("BTC")) {
+        
+        // AKILLI PARİTE KONTROLÜ
+        // Kullanıcı "BTC" yazdıysa "BTCUSDT" yapmalıyız.
+        // Ama "ETHBTC" yazdıysa dokunmamalıyız.
+        
+        let ekle = true;
+
+        // 1. Zaten bir itibari para veya stabil coin ile bitiyorsa ekleme yapma
+        if (pair.endsWith("USDT") || pair.endsWith("TRY") || pair.endsWith("EUR") || pair.endsWith("BUSD") || pair.endsWith("USDC")) {
+            ekle = false;
+        }
+        // 2. Eğer BTC, ETH, BNB ile bitiyorsa ama uzunluğu 4'ten büyükse (örn: ETHBTC -> 6 harf), bu bir paritedir, ekleme yapma.
+        // Ama "BTC" (3 harf) veya "WBTC" (4 harf) ise bunlar coindir, sonuna USDT eklenmelidir.
+        else if ((pair.endsWith("BTC") || pair.endsWith("ETH") || pair.endsWith("BNB")) && pair.length > 4) {
+            ekle = false;
+        }
+
+        if (ekle) {
             pair += "USDT";
         }
 
@@ -68,14 +84,13 @@ async function getirGenelFinans(kod) {
         if (aranan === "DOLAR" || aranan === "USD") key = "USD";
         else if (aranan === "EURO" || aranan === "EUR") key = "EUR";
         else if (aranan === "STERLIN" || aranan === "GBP") key = "GBP";
-        else if (aranan === "ALTIN" || aranan === "GRAM") key = "gram-altin";
+        else if (aranan === "ALTIN" || aranan === "GRAM" || aranan === "GRAM-ALTIN") key = "gram-altin";
         else if (aranan === "CEYREK") key = "ceyrek-altin";
         else if (aranan === "ONS") key = "ons";
         else if (aranan === "BRENT") key = "brent-petrol";
         else if (aranan === "GUMUS") key = "gumus";
         else key = aranan;
 
-        // Truncgil bazen boşluklu bazen tireli key kullanıyor, ikisini de dene
         const veri = data[key] || data[key.replace("-", " ").toUpperCase()];
 
         if (!veri) {
@@ -107,7 +122,6 @@ async function getirGenelFinans(kod) {
 }
 
 // --- 3. MODÜL: BORSA İSTANBUL (Yahoo Finance) ---
-// Bigpara link yapısı sorunlu olduğu için Yahoo Finance'e geçtik.
 async function getirHisse(kod) {
     try {
         const symbol = kod.toUpperCase();
@@ -127,16 +141,13 @@ async function getirHisse(kod) {
         const html = await response.text();
         const $ = cheerio.load(html);
 
-        // Yahoo Finance Seçicileri (fin-streamer etiketleri çok stabildir)
-        // Fiyat
+        // Yahoo Finance Seçicileri
         const fiyatEl = $(`fin-streamer[data-field="regularMarketPrice"][data-symbol="${yahooSymbol}"]`);
         const fiyatText = fiyatEl.attr('value') || fiyatEl.text();
         
-        // Değişim (%)
         const degisimEl = $(`fin-streamer[data-field="regularMarketChangePercent"][data-symbol="${yahooSymbol}"]`);
         const degisimText = degisimEl.attr('value') || degisimEl.text();
 
-        // Başlık (Şirket Adı)
         const baslik = $('h1').first().text().replace(" (.IS)", "").trim();
 
         if (!fiyatText) {
@@ -178,14 +189,12 @@ async function getirHisseYedek(kod) {
         const html = await response.text();
         const $ = cheerio.load(html);
 
-        // Google Finance Seçicileri (Değişebilir ama genelde stabildir)
         const fiyatText = $('.YMlKec.fxKbKc').first().text().replace("₺", "").trim();
         const degisimText = $('.JwB6zf').first().text().replace("%", "").trim();
         const baslik = $('.zzDege').first().text().trim();
 
         if (!fiyatText) return { hata: true, mesaj: `${symbol} bulunamadı.` };
 
-        // Google Türkçe sunucudan 123,45 formatında dönebilir, düzeltelim
         const fiyat = parseFloat(fiyatText.replace(",", "."));
         const degisim = parseFloat(degisimText.replace(",", "."));
 
@@ -232,23 +241,19 @@ export default async function handler(req, res) {
     else {
         const k = kod.toUpperCase();
         
-        // Yaygın Dövizler
         const dovizler = ["USD", "EUR", "GBP", "GRAM", "ONS", "BRENT", "GUMUS", "DOLAR", "EURO", "ALTIN", "STERLIN"];
         
         if (dovizler.includes(k)) {
             sonuc = await getirGenelFinans(kod);
         }
-        // Kripto Belirteçleri (Sonunda USDT/TRY varsa veya bilinen coinlerse)
         else if (k.endsWith("USDT") || k.endsWith("TRY") || ["BTC", "ETH", "SOL", "XRP", "AVAX", "DOGE"].includes(k)) {
             sonuc = await getirKripto(kod);
         }
-        // Geriye kalan her şeyi önce Borsa (Hisse) olarak dene
         else {
             let borsaDene = await getirHisse(kod);
             if (!borsaDene.hata) {
                 sonuc = borsaDene;
             } else {
-                // Borsa'da yoksa Kripto'ya bak (Belki PEPE yazmıştır)
                 sonuc = await getirKripto(kod);
             }
         }
