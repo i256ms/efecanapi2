@@ -102,14 +102,24 @@ async function getirGenelFinans(kod) {
         const aranan = kod.toUpperCase().trim();
         
         let key = "";
+        
+        // --- GENİŞLETİLMİŞ ALTIN VE DÖVİZ EŞLEŞTİRMELERİ ---
         if (aranan === "DOLAR" || aranan === "USD") key = "USD";
         else if (aranan === "EURO" || aranan === "EUR") key = "EUR";
         else if (aranan === "STERLIN" || aranan === "GBP") key = "GBP";
         else if (aranan === "ALTIN" || aranan === "GRAM" || aranan === "GRAM-ALTIN") key = "gram-altin";
-        else if (aranan === "CEYREK") key = "ceyrek-altin";
+        else if (aranan === "CEYREK" || aranan === "ÇEYREK") key = "ceyrek-altin";
+        else if (aranan === "YARIM") key = "yarim-altin";
+        else if (aranan === "TAM") key = "tam-altin";
+        else if (aranan === "CUMHURIYET") key = "cumhuriyet-altini";
+        else if (aranan === "ATA") key = "ata-altin";
+        else if (aranan === "RESAT" || aranan === "REŞAT") key = "resat-altin";
+        else if (aranan === "22AYAR" || aranan === "BILEZIK") key = "22-ayar-bilezik";
+        else if (aranan === "18AYAR") key = "18-ayar-altin";
+        else if (aranan === "14AYAR") key = "14-ayar-altin";
+        else if (aranan === "GUMUS") key = "gumus";
         else if (aranan === "ONS") key = "ons";
         else if (aranan === "BRENT" || aranan === "PETROL") key = "brent-petrol";
-        else if (aranan === "GUMUS") key = "gumus";
         else key = aranan;
 
         const veri = data[key] || data[key.replace("-", " ").toUpperCase()];
@@ -118,12 +128,10 @@ async function getirGenelFinans(kod) {
             return { 
                 hata: true, 
                 mesaj: `Bu veri bulunamadı (${aranan}).`,
-                mevcut_kodlar: ["USD", "EUR", "GRAM", "CEYREK", "ONS", "BRENT"]
+                mevcut_kodlar: ["USD", "EUR", "GRAM", "CEYREK", "YARIM", "TAM", "CUMHURIYET", "ATA", "ONS", "BRENT"]
             };
         }
 
-        // DÜZELTME BURADA: Binlik ayracı olan noktaları siliyoruz, sonra virgülü nokta yapıyoruz.
-        // Örn: "3.050,45" -> "3050.45"
         const alis = parseFloat(veri.Alış.replace(/\./g, "").replace(",", "."));
         const satis = parseFloat(veri.Satış.replace(/\./g, "").replace(",", "."));
         const degisim = parseFloat(veri["Değişim"].replace("%", "").replace(",", "."));
@@ -193,7 +201,6 @@ async function getirHisse(kod) {
                     const degisimText = $('.JwB6zf').first().text().replace("%", "").trim();
                     const baslik = $('.zzDege').first().text().trim();
                     
-                    // Google da Türkçe karakterle gelebilir, temizleyelim
                     sonuc = {
                         kaynak: "Google Finance",
                         fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
@@ -275,7 +282,9 @@ export default async function handler(req, res) {
         }
         else {
             const k = temizKod.toUpperCase();
-            const dovizler = ["USD", "EUR", "GBP", "GRAM", "ONS", "BRENT", "GUMUS", "DOLAR", "EURO", "ALTIN", "STERLIN"];
+            
+            // Genişletilmiş liste
+            const dovizler = ["USD", "EUR", "GBP", "GRAM", "ONS", "BRENT", "GUMUS", "DOLAR", "EURO", "ALTIN", "STERLIN", "TAM", "YARIM", "CEYREK", "CUMHURIYET", "ATA", "RESAT", "22AYAR"];
             
             if (dovizler.includes(k)) {
                 sonuc = await getirGenelFinans(temizKod);
