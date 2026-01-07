@@ -122,8 +122,10 @@ async function getirGenelFinans(kod) {
             };
         }
 
-        const alis = parseFloat(veri.Alış.replace(",", "."));
-        const satis = parseFloat(veri.Satış.replace(",", "."));
+        // DÜZELTME BURADA: Binlik ayracı olan noktaları siliyoruz, sonra virgülü nokta yapıyoruz.
+        // Örn: "3.050,45" -> "3050.45"
+        const alis = parseFloat(veri.Alış.replace(/\./g, "").replace(",", "."));
+        const satis = parseFloat(veri.Satış.replace(/\./g, "").replace(",", "."));
         const degisim = parseFloat(veri["Değişim"].replace("%", "").replace(",", "."));
 
         return {
@@ -176,7 +178,7 @@ async function getirHisse(kod) {
         }
     } catch (e) { console.log("Yahoo fail"); }
 
-    // 2. KAYNAK: GOOGLE FINANCE (Eğer Yahoo olmadıysa)
+    // 2. KAYNAK: GOOGLE FINANCE
     if (!sonuc) {
         try {
             const url = `https://www.google.com/finance/quote/${symbol}:IST`;
@@ -191,9 +193,10 @@ async function getirHisse(kod) {
                     const degisimText = $('.JwB6zf').first().text().replace("%", "").trim();
                     const baslik = $('.zzDege').first().text().trim();
                     
+                    // Google da Türkçe karakterle gelebilir, temizleyelim
                     sonuc = {
                         kaynak: "Google Finance",
-                        fiyat: parseFloat(fiyatText.replace(",", ".")),
+                        fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
                         degisim: parseFloat(degisimText.replace(",", ".")),
                         baslik: baslik || symbol
                     };
@@ -202,7 +205,7 @@ async function getirHisse(kod) {
         } catch (e) { console.log("Google fail"); }
     }
 
-    // 3. KAYNAK: DOVIZ.COM (Yerli ve Milli Yedek - BIST için çok sağlamdır)
+    // 3. KAYNAK: DOVIZ.COM
     if (!sonuc) {
         try {
             const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
@@ -212,18 +215,15 @@ async function getirHisse(kod) {
                 const html = await response.text();
                 const $ = cheerio.load(html);
                 
-                // Doviz.com selector (Genelde .text-4xl classı fiyatı tutar)
                 const fiyatText = $('div[class*="text-4xl"]').first().text().trim();
                 
                 if (fiyatText) {
-                    // Değişim oranı genelde yanında olur veya renkli class'tadır
                     const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
-                    // Başlık için title veya header
-                    const baslik = $('title').text().split('|')[0].trim(); // "THY Hisse Fiyatı..." gibi
+                    const baslik = $('title').text().split('|')[0].trim();
 
                     sonuc = {
                         kaynak: "Doviz.com",
-                        fiyat: parseFloat(fiyatText.replace(",", ".")),
+                        fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
                         degisim: parseFloat(degisimText.replace(",", ".")),
                         baslik: baslik || symbol
                     };
@@ -232,7 +232,6 @@ async function getirHisse(kod) {
         } catch (e) { console.log("Doviz.com fail"); }
     }
 
-    // SONUÇ DÖNDÜRME
     if (sonuc) {
         return {
             tur: "Borsa İstanbul",
@@ -285,12 +284,10 @@ export default async function handler(req, res) {
                 sonuc = await getirKripto(temizKod);
             }
             else {
-                // Önce Borsa dene
                 let borsaDene = await getirHisse(temizKod);
                 if (!borsaDene.hata) {
                     sonuc = borsaDene;
                 } else {
-                    // Bulamazsa Kripto dene
                     sonuc = await getirKripto(temizKod);
                 }
             }
