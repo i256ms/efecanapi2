@@ -4,7 +4,7 @@ import * as cheerio from 'cheerio';
 
 function formatPara(sayi, sembol = "") {
     if (sayi === null || sayi === undefined) return "Veri Yok";
-    if (typeof sayi === 'string') return sayi; // Zaten formatlıysa elleme
+    if (typeof sayi === 'string') return sayi; 
 
     let maxDigits = 2;
     if (Math.abs(sayi) < 1 && Math.abs(sayi) > 0) maxDigits = 6;
@@ -24,6 +24,8 @@ function formatHacim(sayi) {
 }
 
 function getTrendEmoji(degisim) {
+    // Null veya undefined gelirse nötr döndür
+    if (degisim === null || degisim === undefined) return "⚪";
     const d = parseFloat(degisim);
     if (isNaN(d)) return "➖";
     if (d > 0) return "🟢"; 
@@ -31,16 +33,14 @@ function getTrendEmoji(degisim) {
     return "⚪"; 
 }
 
-// --- KAYNAK 1: TRADINGVIEW (JSON API - En Sağlamı) ---
+// --- KAYNAK 1: TRADINGVIEW (JSON API) ---
 async function getirHisseTradingView(symbol) {
     try {
-        // TradingView Scanner API (HTML parse derdi yok, direkt veri!)
         const url = "https://scanner.tradingview.com/turkey/scan";
         
-        // BIST hisselerini sorgulamak için payload
         const body = {
             "symbols": {
-                "tickers": [`BIST:${symbol}`] // Örn: BIST:BOBET
+                "tickers": [`BIST:${symbol}`] 
             },
             "columns": [
                 "close",        // 0: Son Fiyat
@@ -63,15 +63,14 @@ async function getirHisseTradingView(symbol) {
 
         const json = await response.json();
         
-        // Eğer data boşsa hisse bulunamadı demektir
         if (!json.data || json.data.length === 0) return null;
 
-        const d = json.data[0].d; // Veri dizisi
+        const d = json.data[0].d; 
 
         return {
             kaynak: "TradingView",
             fiyat: d[0],
-            degisim: d[1],
+            degisim: d[1], // Bu bazen null gelebilir
             hacim: d[2],
             piyasa_degeri: d[3],
             baslik: d[4],
@@ -85,7 +84,7 @@ async function getirHisseTradingView(symbol) {
     }
 }
 
-// --- KAYNAK 2: DOVİZ.COM (Yedek - HTML Scraper) ---
+// --- KAYNAK 2: DOVİZ.COM (Yedek) ---
 async function getirHisseDoviz(symbol) {
     try {
         const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
@@ -100,7 +99,6 @@ async function getirHisseDoviz(symbol) {
         const html = await response.text();
         const $ = cheerio.load(html);
         
-        // Fiyatı bul
         let fiyatText = $('div[data-socket-key="' + symbol + '"]').text().trim();
         if (!fiyatText) fiyatText = $('div[class*="text-4xl"]').first().text().trim();
         
@@ -120,10 +118,10 @@ async function getirHisseDoviz(symbol) {
                 if (label.includes("Piyasa Değeri")) piyasaDegeri = val;
             });
 
-            // Doviz.com'dan gelen stringleri parse etmiyoruz, formatPara fonksiyonu halledecek
             return {
                 kaynak: "Doviz.com",
-                fiyat: fiyatText, // String olarak gönderiyoruz: "2.052,00"
+                fiyat: parseFloat(fiyatText.replace(",", ".").replace(/\./g, "").replace(",", ".")), // Doviz.com formatı biraz karışıktır, basit parse
+                fiyat_raw: fiyatText, // Ham metin (yedek)
                 degisim: parseFloat(degisimText.replace(",", ".")),
                 baslik: baslik || symbol,
                 hacim_txt: hacim,
@@ -151,7 +149,6 @@ export default async function handler(req, res) {
 
     try {
         // STRATEJİ: Önce TradingView (API), Olmazsa Doviz.com (HTML)
-        
         sonuc = await getirHisseTradingView(symbol);
         
         if (!sonuc) {
@@ -159,7 +156,9 @@ export default async function handler(req, res) {
         }
 
         if (sonuc) {
-            // Verileri Formatla
+            // --- GÜVENLİK KONTROLÜ (HATA BURADAYDI) ---
+            // Değişim oranı null veya undefined ise 0 kabul et
+            const degisim = (sonuc.degisim !== null && sonuc.degisim !== undefined) ? Number(sonuc.degisim) : 0;
             
             // Gün Aralığı
             let gunAraligiFinal = "Veri Yok";
@@ -179,15 +178,18 @@ export default async function handler(req, res) {
             if (sonuc.piyasa_degeri) pdFinal = formatHacim(sonuc.piyasa_degeri);
             else if (sonuc.piyasa_degeri_txt) pdFinal = sonuc.piyasa_degeri_txt;
 
+            // Fiyat (Doviz.com'dan ham geldiyse olduğu gibi kullan, yoksa formatla)
+            const finalFiyat = sonuc.fiyat_raw ? sonuc.fiyat_raw + " TL" : formatPara(sonuc.fiyat, "TL");
+
             res.status(200).json({
                 tur: "Borsa İstanbul",
                 sembol: symbol,
                 baslik: sonuc.baslik,
                 kaynak: sonuc.kaynak,
                 
-                fiyat: formatPara(sonuc.fiyat, "TL"),
-                degisim_yuzde: sonuc.degisim.toFixed(2),
-                degisim_emoji: getTrendEmoji(sonuc.degisim),
+                fiyat: finalFiyat,
+                degisim_yuzde: degisim.toFixed(2), // Artık güvenli
+                degisim_emoji: getTrendEmoji(degisim),
                 
                 gun_araligi: gunAraligiFinal,
                 hacim: hacimFinal,
