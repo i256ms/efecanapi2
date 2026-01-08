@@ -1,10 +1,14 @@
 // --- YARDIMCI FONKSİYONLAR ---
 
 // Kripto paralar için özel para formatlayıcı
-// Bitcoin 60.000$ iken 2 hane, PEPE 0.000004$ iken 8 hane göstermeli.
 function formatPara(sayi, sembol = "") {
     if (sayi === null || sayi === undefined) return "Veri Yok";
+    
+    // String geldiyse sayıya çevir
     if (typeof sayi === 'string') sayi = parseFloat(sayi);
+    
+    // Eğer sayı değilse (NaN) direkt dön
+    if (isNaN(sayi)) return "Veri Yok";
 
     let maxDigits = 2;
     const absVal = Math.abs(sayi);
@@ -24,12 +28,13 @@ function formatPara(sayi, sembol = "") {
 }
 
 function formatHacim(sayi) {
-    if (!sayi) return "Veri Yok";
+    if (!sayi && sayi !== 0) return "Veri Yok";
     if (typeof sayi === 'string') sayi = parseFloat(sayi);
+    if (isNaN(sayi)) return "Veri Yok";
 
-    if (sayi >= 1.0e+9) return (sayi / 1.0e+9).toFixed(2) + " Mr"; // Milyar
-    if (sayi >= 1.0e+6) return (sayi / 1.0e+6).toFixed(2) + " Mn"; // Milyon
-    if (sayi >= 1.0e+3) return (sayi / 1.0e+3).toFixed(2) + " B";  // Bin
+    if (sayi >= 1.0e+9) return (sayi / 1.0e+9).toFixed(2) + " Mr"; 
+    if (sayi >= 1.0e+6) return (sayi / 1.0e+6).toFixed(2) + " Mn"; 
+    if (sayi >= 1.0e+3) return (sayi / 1.0e+3).toFixed(2) + " B";  
     return sayi.toFixed(2);
 }
 
@@ -60,7 +65,6 @@ async function getirBinance(pair) {
         
         const data = await response.json();
         
-        // Binance response yapısı
         return {
             kaynak: "Binance",
             sembol: data.symbol,
@@ -88,6 +92,15 @@ async function getirMexc(pair) {
         
         const data = await response.json();
         
+        // MEXC bazen ağırlıklı ortalamayı null döner veya hiç vermez.
+        // Bu durumda biz hesaplarız: Toplam Para / Toplam Adet
+        let avgPrice = parseFloat(data.weightedAvgPrice);
+        if (isNaN(avgPrice) || !avgPrice) {
+            if (data.quoteVolume && data.volume) {
+                avgPrice = parseFloat(data.quoteVolume) / parseFloat(data.volume);
+            }
+        }
+
         return {
             kaynak: "MEXC",
             sembol: data.symbol,
@@ -99,8 +112,8 @@ async function getirMexc(pair) {
             dusuk: parseFloat(data.lowPrice),
             hacim_coin: parseFloat(data.volume),
             hacim_usdt: parseFloat(data.quoteVolume),
-            agirlikli_ort: parseFloat(data.weightedAvgPrice),
-            islem_sayisi: data.count
+            agirlikli_ort: avgPrice, // Hesapladığımız değer
+            islem_sayisi: data.count || null // Yoksa null dön
         };
     } catch (e) { console.log("Mexc fail:", e.message); return null; }
 }
@@ -120,11 +133,9 @@ export default async function handler(req, res) {
     let symbol = kod.toUpperCase().trim();
     let pair = symbol;
 
-    // İstisna: Sadece "USDT" yazılırsa Dolar/TL kurunu getirsin
     if (symbol === "USDT") {
         pair = "USDTTRY";
     } else {
-        // Eğer zaten bir parite değilse (sonunda USDT, TRY, BTC yoksa) sonuna USDT ekle
         const suffixes = ["USDT", "TRY", "BTC", "ETH", "BNB", "EUR", "BUSD", "USDC", "FDUSD"];
         const hasSuffix = suffixes.some(s => symbol.endsWith(s) && symbol.length > s.length);
         
@@ -145,7 +156,7 @@ export default async function handler(req, res) {
             // Veri Formatlama
             const guncellemeUnix = Math.floor(Date.now() / 1000);
             
-            // Fiyat Sembolü Belirleme (BTCUSDT -> $, BTCTRY -> ₺)
+            // Fiyat Sembolü Belirleme
             let paraBirimi = "$";
             if (pair.endsWith("TRY")) paraBirimi = "₺";
             if (pair.endsWith("BTC")) paraBirimi = "₿";
@@ -153,8 +164,8 @@ export default async function handler(req, res) {
 
             res.status(200).json({
                 tur: "Kripto Para",
-                sembol: symbol, // Kullanıcının girdiği (BTC)
-                parite: sonuc.sembol, // API'den gelen (BTCUSDT)
+                sembol: symbol,
+                parite: sonuc.sembol,
                 kaynak: sonuc.kaynak,
                 
                 fiyat: formatPara(sonuc.fiyat, paraBirimi),
@@ -170,9 +181,11 @@ export default async function handler(req, res) {
                 detaylar: {
                     gun_araligi: `${formatPara(sonuc.dusuk)} - ${formatPara(sonuc.yuksek)}`,
                     acilis: formatPara(sonuc.acilis, paraBirimi),
-                    hacim_24s: formatHacim(sonuc.hacim_usdt) + " " + (paraBirimi === "₺" ? "TL" : "$"), // Dolar/TL hacmi
-                    hacim_adet: formatHacim(sonuc.hacim_coin) + " Adet", // Coin hacmi
+                    hacim_24s: formatHacim(sonuc.hacim_usdt) + " " + (paraBirimi === "₺" ? "TL" : "$"), 
+                    hacim_adet: formatHacim(sonuc.hacim_coin) + " Adet",
+                    // İşlem sayısı yoksa "Veri Yok" yazacak
                     islem_sayisi: sonuc.islem_sayisi ? new Intl.NumberFormat('tr-TR').format(sonuc.islem_sayisi) : "Veri Yok",
+                    // NaN gelirse formatPara bunu "Veri Yok" olarak düzeltecek
                     ort_fiyat: formatPara(sonuc.agirlikli_ort, paraBirimi)
                 }
             });
