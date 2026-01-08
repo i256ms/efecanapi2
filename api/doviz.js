@@ -1,70 +1,87 @@
 // --- YARDIMCI FONKSİYONLAR ---
 
-// Esnek Sayı Okuyucu (TR ve US formatlarını otomatik tanır)
+// Esnek Sayı Okuyucu
 function parseNumber(str) {
-    if (!str) return null;
+    if (str === null || str === undefined) return null;
     if (typeof str === 'number') return str;
     
-    str = str.trim();
+    str = str.toString().trim().replace(/[€$£₺]/g, "").replace("TL", "").trim();
     if (str === "-" || str === "") return null;
 
-    // 1. Durum: Standart TR Formatı (3.000,50) -> Binlik nokta, Ondalık virgül
     if (str.includes(",") && str.includes(".")) {
         return parseFloat(str.replace(/\./g, "").replace(",", "."));
     }
-    
-    // 2. Durum: Sadece Virgül Var (3000,50) -> TR Formatı
     if (str.includes(",") && !str.includes(".")) {
         return parseFloat(str.replace(",", "."));
     }
-
-    // 3. Durum: Sadece Nokta Var (2650.45 veya 2.650) -> Karışık Durum
     if (str.includes(".") && !str.includes(",")) {
-        // Eğer birden fazla nokta varsa (1.234.567) binliktir.
         if ((str.match(/\./g) || []).length > 1) {
             return parseFloat(str.replace(/\./g, ""));
         }
-        // Tek nokta varsa ve ondalık gibi duruyorsa (Doviz/Ons genelde böyledir)
-        // Truncgil genelde TR formatı atar ama ONS bazen US gelir.
-        // Güvenli yöntem: Noktayı sil (Binlik kabul et). 
-        // Eğer kuruşlu gelirse formatPara fonksiyonu zaten düzeltir.
         return parseFloat(str.replace(/\./g, ""));
     }
-
-    // 4. Durum: Düz Sayı
     return parseFloat(str);
 }
 
 function formatPara(sayi, sembol = "") {
     if (sayi === null || sayi === undefined || isNaN(sayi)) return "Veri Yok";
     
+    // Çok küçük pariteler için hassasiyeti artır
     let maxDigits = 2;
     const absVal = Math.abs(sayi);
     
-    // Kuruşlu dövizler için 4 hane
-    if (absVal < 10) maxDigits = 4; 
+    if (absVal < 0.001) maxDigits = 6;
+    else if (absVal < 1) maxDigits = 5;
+    else if (absVal < 10) maxDigits = 4;
     
     const formatted = new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: maxDigits }).format(sayi);
     return sembol ? `${formatted} ${sembol}` : formatted;
 }
 
 function getTrendEmoji(degisim) {
-    // Null kontrolü
     if (degisim === null || degisim === undefined) return "⚪";
-
-    // Değişim string gelirse (%0.45 veya %-0.45) temizle
     let d = degisim;
     if (typeof degisim === 'string') {
         d = parseFloat(degisim.replace("%", "").replace(",", "."));
     }
-    
     if (isNaN(d)) return "⚪";
     if (d > 0) return "🟢"; 
-    if (d < 0) return "🔴"; // HATA BURADAYDI (d yerine degisim yazıyordu veya d tanımsızdı)
+    if (d < 0) return "🔴"; 
     return "⚪"; 
 }
 
-// Ortak Fetch Fonksiyonu
+// Anahtar Kelime Çözücü (Normalize)
+function cozAnahtar(hamKod) {
+    if (!hamKod) return null;
+    const aranan = hamKod.toUpperCase().trim();
+    
+    if (aranan === "DOLAR" || aranan === "USD" || aranan === "$") return "USD";
+    if (aranan === "EURO" || aranan === "EUR" || aranan === "AVRO" || aranan === "€") return "EUR";
+    if (aranan === "STERLIN" || aranan === "GBP" || aranan === "£") return "GBP";
+    if (aranan === "JAPON YENI" || aranan === "JPY") return "JPY";
+    if (aranan === "KANADA DOLARI" || aranan === "CAD") return "CAD";
+    if (aranan === "RUS RUBLESI" || aranan === "RUB") return "RUB";
+    if (aranan === "CIN YUANI" || aranan === "CNY") return "CNY";
+    if (aranan === "TURK LIRASI" || aranan === "TL" || aranan === "TRY") return "TRY"; // TL eklendi
+    
+    if (aranan === "ALTIN" || aranan === "GRAM" || aranan === "GRAM-ALTIN") return "gram-altin";
+    if (aranan === "CEYREK" || aranan === "ÇEYREK") return "ceyrek-altin";
+    if (aranan === "YARIM") return "yarim-altin";
+    if (aranan === "TAM") return "tam-altin";
+    if (aranan === "CUMHURIYET") return "cumhuriyet-altini";
+    if (aranan === "ATA") return "ata-altin";
+    if (aranan === "RESAT" || aranan === "REŞAT") return "resat-altin";
+    if (aranan === "22AYAR" || aranan === "BILEZIK") return "22-ayar-bilezik";
+    if (aranan === "18AYAR") return "18-ayar-altin";
+    if (aranan === "14AYAR") return "14-ayar-altin";
+    if (aranan === "HAS" || aranan === "HASALTIN") return "has-altin";
+    if (aranan === "GUMUS" || aranan === "GÜMÜŞ") return "gumus";
+    if (aranan === "ONS") return "ons";
+    if (aranan === "BRENT" || aranan === "PETROL") return "brent-petrol";
+    
+    return aranan;
+}
+
 async function fetchWithHeaders(url) {
     return await fetch(url, {
         headers: {
@@ -75,40 +92,20 @@ async function fetchWithHeaders(url) {
 
 // --- ANA YÖNETİCİ ---
 export default async function handler(req, res) {
-    const { kod } = req.query;
+    const { kod, from, to } = req.query;
 
-    if (!kod) {
+    // Giriş Kontrolü: Ya 'kod' olacak ya da 'from' ve 'to'
+    if (!kod && (!from || !to)) {
         return res.status(400).json({
             hata: true,
-            mesaj: "Lütfen bir döviz veya altın kodu girin. Örn: /api/doviz?kod=USD"
+            mesaj: "Eksik parametre. Lütfen 'kod' VEYA 'from' ve 'to' girin.",
+            ornekler: [
+                "/api/doviz?kod=USD",
+                "/api/doviz?from=USD&to=EUR",
+                "/api/doviz?from=GRAM&to=TL"
+            ]
         });
     }
-
-    const aranan = kod.toUpperCase().trim();
-    let key = "";
-
-    // AKILLI EŞLEŞTİRME SÖZLÜĞÜ
-    if (aranan === "DOLAR" || aranan === "USD" || aranan === "$") key = "USD";
-    else if (aranan === "EURO" || aranan === "EUR" || aranan === "AVRO" || aranan === "€") key = "EUR";
-    else if (aranan === "STERLIN" || aranan === "GBP" || aranan === "£") key = "GBP";
-    else if (aranan === "ALTIN" || aranan === "GRAM" || aranan === "GRAM-ALTIN") key = "gram-altin";
-    else if (aranan === "CEYREK" || aranan === "ÇEYREK") key = "ceyrek-altin";
-    else if (aranan === "YARIM") key = "yarim-altin";
-    else if (aranan === "TAM") key = "tam-altin";
-    else if (aranan === "CUMHURIYET") key = "cumhuriyet-altini";
-    else if (aranan === "ATA") key = "ata-altin";
-    else if (aranan === "RESAT" || aranan === "REŞAT") key = "resat-altin";
-    else if (aranan === "22AYAR" || aranan === "BILEZIK") key = "22-ayar-bilezik";
-    else if (aranan === "18AYAR") key = "18-ayar-altin";
-    else if (aranan === "14AYAR") key = "14-ayar-altin";
-    else if (aranan === "HAS" || aranan === "HASALTIN") key = "has-altin";
-    else if (aranan === "GUMUS" || aranan === "GÜMÜŞ") key = "gumus";
-    else if (aranan === "ONS") key = "ons";
-    else if (aranan === "BRENT" || aranan === "PETROL") key = "brent-petrol";
-    else if (aranan === "PLATIN") key = "platin";
-    else if (aranan === "PALADYUM") key = "paladyum";
-    else if (aranan === "DOGALGAZ" || aranan === "GAZ") key = "dogalgaz";
-    else key = aranan;
 
     try {
         const url = "https://finans.truncgil.com/today.json";
@@ -120,27 +117,111 @@ export default async function handler(req, res) {
         
         const data = await response.json();
         
-        let veri = data[key] || data[key.replace("-", " ").toUpperCase()] || data[key.toLowerCase()];
+        // --- PARİTE MODU MU? ---
+        let pariteModu = false;
+        let baseCode = "";
+        let quoteCode = "";
+        let singleCode = "";
 
-        // Özel Durum: ONS bazen farklı isimde olabilir
-        if (!veri && key === "ons") {
+        // 1. Yöntem: ?from=USD&to=TRY (En Temizi)
+        if (from && to) {
+            pariteModu = true;
+            baseCode = cozAnahtar(from);
+            quoteCode = cozAnahtar(to);
+        } 
+        // 2. Yöntem: ?kod=USD/TRY (Eski Usül)
+        else if (kod) {
+            const hamKod = kod.toUpperCase().trim();
+            const ayiricilar = ["/", "-", " "];
+            
+            for (const sep of ayiricilar) {
+                if (hamKod.includes(sep)) {
+                    const parts = hamKod.split(sep);
+                    if (parts.length === 2 && parts[0] && parts[1]) {
+                        pariteModu = true;
+                        baseCode = cozAnahtar(parts[0]);
+                        quoteCode = cozAnahtar(parts[1]);
+                        break;
+                    }
+                }
+            }
+            if (!pariteModu) {
+                singleCode = cozAnahtar(hamKod);
+            }
+        }
+
+        // --- HESAPLAMA MOTORU (Çapraz Kur) ---
+        if (pariteModu) {
+            // Eğer hedef TRY ise direkt base'in fiyatını getiririz
+            if (quoteCode === "TRY") {
+                singleCode = baseCode; // Aşağıdaki tekli sorgu bloğuna düşsün
+            } else {
+                // İki para birimini de çek (İkisi de TL bazlıdır)
+                const baseVeri = data[baseCode] || data[baseCode.replace("-", " ").toUpperCase()] || data[baseCode.toLowerCase()];
+                // Eğer baseCode TRY ise fiyatı 1 kabul et
+                const baseFiyat = baseCode === "TRY" ? 1 : parseNumber(baseVeri?.Satış);
+                
+                const quoteVeri = data[quoteCode] || data[quoteCode.replace("-", " ").toUpperCase()] || data[quoteCode.toLowerCase()];
+                // Eğer quoteCode TRY ise fiyatı 1 kabul et (Yukarıdaki if bunu yakalar ama garanti olsun)
+                const quoteFiyat = quoteCode === "TRY" ? 1 : parseNumber(quoteVeri?.Satış);
+
+                if (baseFiyat && quoteFiyat) {
+                    // Değişimleri çek (% stringini sayıya çevir)
+                    const baseDegisim = baseCode === "TRY" ? 0 : parseFloat((baseVeri["Değişim"] || "0").replace("%", "").replace(",", "."));
+                    const quoteDegisim = quoteCode === "TRY" ? 0 : parseFloat((quoteVeri["Değişim"] || "0").replace("%", "").replace(",", "."));
+
+                    // Çapraz Kur Hesabı
+                    const pariteFiyati = baseFiyat / quoteFiyat;
+                    
+                    // Çapraz Değişim Hesabı (Yaklaşık)
+                    // (1 + base%) / (1 + quote%) - 1
+                    const pariteDegisim = ((1 + baseDegisim/100) / (1 + quoteDegisim/100) - 1) * 100;
+
+                    const guncellemeUnix = Math.floor(Date.now() / 1000);
+
+                    return res.status(200).json({
+                        tur: "Çapraz Kur (Hesaplanan)",
+                        sembol: `${baseCode}/${quoteCode}`,
+                        baslik: `${baseCode} / ${quoteCode} Paritesi`,
+                        kaynak: "Truncgil (Hesaplamalı)",
+                        
+                        fiyat: formatPara(pariteFiyati),
+                        degisim_yuzde: `%${pariteDegisim.toFixed(2)}`,
+                        degisim_emoji: getTrendEmoji(pariteDegisim),
+                        
+                        guncelleme_unix: guncellemeUnix,
+                        guncelleme_discord: `<t:${guncellemeUnix}:R>`,
+                        
+                        detaylar: {
+                            base: { kod: baseCode, fiyat: formatPara(baseFiyat, "TL") },
+                            quote: { kod: quoteCode, fiyat: formatPara(quoteFiyat, "TL") },
+                            not: "Bu veriler TL kurları üzerinden oranlanmıştır."
+                        }
+                    });
+                }
+            }
+        }
+
+        // --- TEKLİ SORGULAMA (STANDART TL BAZLI) ---
+        // Eğer parite değilse veya hedef TRY ise buraya düşer
+        
+        let veri = data[singleCode] || data[singleCode.replace("-", " ").toUpperCase()] || data[singleCode.toLowerCase()];
+
+        if (!veri && singleCode === "ons") {
              const adaylar = ["ons", "Ons", "ONS", "Ons Altın"];
-             for (const k of adaylar) {
-                 if (data[k]) { veri = data[k]; break; }
-             }
+             for (const k of adaylar) { if (data[k]) { veri = data[k]; break; } }
         }
 
         if (!veri) {
             return res.status(404).json({ 
                 hata: true, 
-                mesaj: `Bu veri bulunamadı (${aranan}).`,
+                mesaj: `Bu veri bulunamadı (${singleCode || kod}).`,
                 mevcut_anahtarlar: Object.keys(data).slice(0, 10)
             });
         }
 
         const alis = parseNumber(veri.Alış);
         const satis = parseNumber(veri.Satış);
-        
         let degisimStr = veri["Değişim"] || "0";
         const degisim = parseFloat(degisimStr.replace("%", "").replace(",", "."));
         
@@ -152,20 +233,18 @@ export default async function handler(req, res) {
         }
 
         const guncellemeUnix = Math.floor(Date.now() / 1000);
-
         let paraBirimi = "TL";
-        if (key === "ons") paraBirimi = "$";
-        if (key === "EUR" && aranan.includes("PARITE")) paraBirimi = "";
+        if (singleCode === "ons") paraBirimi = "$";
+        if (singleCode === "EUR" && (kod || "").includes("PARITE")) paraBirimi = "";
 
         res.status(200).json({
             tur: "Piyasa (Döviz/Altın/Emtia)",
-            sembol: key.toUpperCase().replace(/-/g, " "),
-            baslik: key.toUpperCase().replace(/-/g, " "),
+            sembol: singleCode.toUpperCase().replace(/-/g, " "),
+            baslik: singleCode.toUpperCase().replace(/-/g, " "),
             kaynak: "Truncgil",
             
             fiyat: formatPara(satis, paraBirimi), 
             fiyat_alternatif: !satis ? formatPara(alis, paraBirimi) : null,
-            
             degisim_yuzde: `%${degisim.toFixed(2)}`,
             degisim_emoji: getTrendEmoji(degisim),
             
