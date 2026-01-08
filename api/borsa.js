@@ -1,5 +1,30 @@
 import * as cheerio from 'cheerio';
 
+// --- SEKTÖR ÇEVİRİ SÖZLÜĞÜ ---
+const SEKTOR_CEVIRI = {
+    "Energy Minerals": "Enerji Madenciliği",
+    "Non-Energy Minerals": "Enerji Dışı Madencilik",
+    "Commercial Services": "Ticari Hizmetler",
+    "Communications": "İletişim",
+    "Consumer Durables": "Dayanıklı Tüketim",
+    "Consumer Non-Durables": "Dayanıksız Tüketim",
+    "Distribution Services": "Dağıtım Hizmetleri",
+    "Electronic Technology": "Elektronik Teknolojisi",
+    "Finance": "Finans",
+    "Health Services": "Sağlık Hizmetleri",
+    "Health Technology": "Sağlık Teknolojisi",
+    "Industrial Services": "Endüstriyel Hizmetler",
+    "Miscellaneous": "Çeşitli / Holding",
+    "Process Industries": "İşleme Sanayi",
+    "Producer Manufacturing": "İmalat Sanayi",
+    "Retail Trade": "Perakende Ticaret",
+    "Technology Services": "Teknoloji Hizmetleri",
+    "Transportation": "Ulaşım / Lojistik",
+    "Utilities": "Kamu Hizmetleri (Elektrik/Su)",
+    "Real Estate": "Gayrimenkul",
+    "Consumer Services": "Tüketici Hizmetleri"
+};
+
 // --- YARDIMCI FONKSİYONLAR ---
 
 function formatPara(sayi, sembol = "") {
@@ -13,14 +38,13 @@ function formatPara(sayi, sembol = "") {
     return sembol ? `${formatted} ${sembol}` : formatted;
 }
 
+// ARTIK KISALTMA YOK: Sayıları tam formatta yazar (1.234.567)
 function formatHacim(sayi) {
     if (!sayi || sayi === "Veri Yok") return "Veri Yok";
     if (typeof sayi === 'string') return sayi;
 
-    if (sayi >= 1.0e+9) return (sayi / 1.0e+9).toFixed(2).replace(".", ",") + " Mr"; 
-    if (sayi >= 1.0e+6) return (sayi / 1.0e+6).toFixed(2).replace(".", ",") + " Mn"; 
-    if (sayi >= 1.0e+3) return (sayi / 1.0e+3).toFixed(2).replace(".", ",") + " B";  
-    return sayi.toString();
+    // Tam sayı formatı (Virgül yok, sadece binlik ayırıcı nokta)
+    return new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 0 }).format(sayi);
 }
 
 function getTrendEmoji(degisim) {
@@ -32,7 +56,6 @@ function getTrendEmoji(degisim) {
     return "⚪"; 
 }
 
-// Teknik Analiz Puanını Yorumla (TradingView'den gelen 0-1 arası değer)
 function getOneri(score) {
     if (score === null || score === undefined) return "Nötr ⚪";
     if (score >= 0.5) return "Güçlü Al 🟢";
@@ -42,27 +65,24 @@ function getOneri(score) {
     return "Güçlü Sat 🔴";
 }
 
-// Borsa İstanbul Açık mı? (Basit Saat Kontrolü)
 function getPiyasaDurumu() {
     const now = new Date().toLocaleString("en-US", { timeZone: "Europe/Istanbul" });
     const date = new Date(now);
-    const day = date.getDay(); // 0=Pazar, 6=Cumartesi
+    const day = date.getDay(); 
     const hour = date.getHours();
     const min = date.getMinutes();
     
-    // Hafta sonu kapalı
     if (day === 0 || day === 6) return "Kapalı (Hafta Sonu) 🔴";
     
-    // BIST Saatleri: 09:55 - 18:10 arası (Yaklaşık)
     const totalMinutes = hour * 60 + min;
-    const start = 9 * 60 + 55; // 09:55
-    const end = 18 * 60 + 10;  // 18:10
+    const start = 9 * 60 + 55; 
+    const end = 18 * 60 + 10;  
     
     if (totalMinutes >= start && totalMinutes <= end) return "Açık 🟢";
     return "Kapalı 🔴";
 }
 
-// --- KAYNAK 1: TRADINGVIEW (JSON API - Ultra Detaylı) ---
+// --- KAYNAK 1: TRADINGVIEW (JSON API) ---
 async function getirHisseTradingView(symbol) {
     try {
         const url = "https://scanner.tradingview.com/turkey/scan";
@@ -70,20 +90,11 @@ async function getirHisseTradingView(symbol) {
         const body = {
             "symbols": { "tickers": [`BIST:${symbol}`] },
             "columns": [
-                "close",              // 0: Son Fiyat
-                "change|1d",          // 1: Değişim %
-                "volume",             // 2: Hacim
-                "market_cap_basic",   // 3: Piyasa Değeri
-                "description",        // 4: Şirket Adı
-                "high",               // 5: Gün Yüksek
-                "low",                // 6: Gün Düşük
-                "open",               // 7: Açılış
-                "price_52_week_high", // 8: 52 Hafta Yüksek
-                "price_52_week_low",  // 9: 52 Hafta Düşük
-                "price_earnings_ttm", // 10: F/K Oranı
-                "sector",             // 11: Sektör
-                "Recommend.All",      // 12: Teknik Analiz Puanı
-                "average_volume_10d_calc" // 13: 10 Günlük Ort. Hacim
+                "close", "change|1d", "volume", "market_cap_basic", 
+                "description", "high", "low", "open", 
+                "price_52_week_high", "price_52_week_low", 
+                "price_earnings_ttm", "sector", "Recommend.All", 
+                "average_volume_10d_calc"
             ]
         };
 
@@ -99,6 +110,10 @@ async function getirHisseTradingView(symbol) {
 
         const d = json.data[0].d; 
 
+        // Sektör ismini Türkçeye çevir
+        const hamSektor = d[11];
+        const turkceSektor = SEKTOR_CEVIRI[hamSektor] || hamSektor || "Genel";
+
         return {
             kaynak: "TradingView",
             fiyat: d[0],
@@ -112,7 +127,7 @@ async function getirHisseTradingView(symbol) {
             yil_yuksek: d[8],
             yil_dusuk: d[9],
             fk_orani: d[10],
-            sektor: d[11],
+            sektor: turkceSektor, // Çevrilmiş hali
             oneri_puani: d[12],
             ort_hacim: d[13]
         };
@@ -123,7 +138,7 @@ async function getirHisseTradingView(symbol) {
     }
 }
 
-// --- KAYNAK 2: DOVİZ.COM (Yedek - HTML Scraper) ---
+// --- KAYNAK 2: DOVİZ.COM (Yedek) ---
 async function getirHisseDoviz(symbol) {
     try {
         const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
@@ -145,7 +160,6 @@ async function getirHisseDoviz(symbol) {
             const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
             const baslik = $('title').text().split('|')[0].trim();
             
-            // Detayları topla
             const detaylar = {
                 hacim: null,
                 gun_araligi: null,
@@ -199,27 +213,20 @@ export default async function handler(req, res) {
     let sonuc = null;
 
     try {
-        // 1. Önce TradingView'den çek (En hızlı ve güvenilir)
+        // 1. TradingView
         sonuc = await getirHisseTradingView(symbol);
         
-        // --- VERİ ZENGİNLEŞTİRME (DATA ENRICHMENT) ---
-        // Eğer TradingView geldi ama F/K oranı (price_earnings_ttm) boşsa,
-        // Doviz.com'a gidip sadece o eksik veriyi tamamla.
+        // Veri Tamamlama (F/K Eksikse)
         if (sonuc && (sonuc.fk_orani === null || sonuc.fk_orani === undefined)) {
             try {
-                // Sadece eksik veriyi tamamlamak için Doviz.com'u çağırıyoruz
                 const dovizYedek = await getirHisseDoviz(symbol);
                 if (dovizYedek && dovizYedek.fk_txt) {
-                    // "8,45" gibi gelen metni sayıya çevir
                     sonuc.fk_orani = parseFloat(dovizYedek.fk_txt.replace(",", "."));
-                    // Kaynak bilgisini güncelleme ki ana kaynağın TradingView olduğu bilinsin
                 }
-            } catch (e) { 
-                // Yedek de çalışmazsa sessizce devam et
-            }
+            } catch (e) { }
         }
 
-        // 2. Eğer TradingView tamamen başarısızsa Doviz.com'u ana kaynak yap
+        // 2. Doviz.com (Yedek)
         if (!sonuc) {
             sonuc = await getirHisseDoviz(symbol);
         }
@@ -227,7 +234,7 @@ export default async function handler(req, res) {
         if (sonuc) {
             const degisim = (sonuc.degisim !== null && sonuc.degisim !== undefined) ? Number(sonuc.degisim) : 0;
             
-            // Formatlama
+            // Detay Formatlama
             let gunAraligiFinal = "Veri Yok";
             if (sonuc.gun_dusuk && sonuc.gun_yuksek) {
                 gunAraligiFinal = `${formatPara(sonuc.gun_dusuk)} - ${formatPara(sonuc.gun_yuksek)}`;
@@ -242,11 +249,11 @@ export default async function handler(req, res) {
                 yilAraligiFinal = sonuc.yil_araligi_txt;
             }
 
+            // Hacim & Piyasa Değeri (ARTIK TAM SAYI OLARAK FORMATLANIR)
             let hacimFinal = "Veri Yok";
             if (sonuc.hacim) hacimFinal = formatHacim(sonuc.hacim);
             else if (sonuc.hacim_txt) hacimFinal = sonuc.hacim_txt;
 
-            // Ortalama Hacim (TradingView'e özel)
             let ortHacimFinal = sonuc.ort_hacim ? formatHacim(sonuc.ort_hacim) : "Veri Yok";
 
             let pdFinal = "Veri Yok";
@@ -257,8 +264,6 @@ export default async function handler(req, res) {
             let fkFinal = sonuc.fk_orani ? sonuc.fk_orani.toFixed(2) : (sonuc.fk_txt || "Veri Yok");
 
             const finalFiyat = sonuc.fiyat_raw ? sonuc.fiyat_raw + " TL" : formatPara(sonuc.fiyat, "TL");
-
-            // Güncel Unix Zamanı (Discord için)
             const guncellemeUnix = Math.floor(Date.now() / 1000);
 
             res.status(200).json({
@@ -267,16 +272,14 @@ export default async function handler(req, res) {
                 baslik: sonuc.baslik,
                 kaynak: sonuc.kaynak,
                 sektor: sonuc.sektor || "Genel",
-                piyasa_durumu: getPiyasaDurumu(), // Açık/Kapalı
+                piyasa_durumu: getPiyasaDurumu(),
                 
                 fiyat: finalFiyat,
                 degisim_yuzde: degisim.toFixed(2),
                 degisim_emoji: getTrendEmoji(degisim),
                 
-                // Teknik Analiz
                 teknik_analiz: getOneri(sonuc.oneri_puani),
                 
-                // Zaman ve Not
                 guncelleme_unix: guncellemeUnix,
                 guncelleme_discord: `<t:${guncellemeUnix}:R>`,
                 not: "Veriler yasal zorunluluk gereği 15dk gecikmelidir.",
@@ -295,7 +298,6 @@ export default async function handler(req, res) {
             res.status(404).json({ 
                 hata: true, 
                 mesaj: `Hisse verisi TradingView ve Doviz.com'dan çekilemedi (${symbol}).`,
-                sebep: "Kod hatalı olabilir veya kaynaklar yanıt vermiyor."
             });
         }
     } catch (err) {
