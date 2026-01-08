@@ -4,10 +4,8 @@
 function formatPara(sayi, sembol = "") {
     if (sayi === null || sayi === undefined) return "Veri Yok";
     
-    // String geldiyse sayıya çevir
     if (typeof sayi === 'string') sayi = parseFloat(sayi);
     
-    // Eğer sayı değilse (NaN) direkt dön
     if (isNaN(sayi)) return "Veri Yok";
 
     let maxDigits = 2;
@@ -55,7 +53,7 @@ async function fetchWithHeaders(url) {
     });
 }
 
-// --- KAYNAK 1: BINANCE ---
+// --- KAYNAK 1: BINANCE GLOBAL ---
 async function getirBinance(pair) {
     try {
         const url = `https://api.binance.com/api/v3/ticker/24hr?symbol=${pair}`;
@@ -79,10 +77,38 @@ async function getirBinance(pair) {
             agirlikli_ort: parseFloat(data.weightedAvgPrice),
             islem_sayisi: data.count
         };
-    } catch (e) { console.log("Binance fail:", e.message); return null; }
+    } catch (e) { console.log("Binance fail"); return null; }
 }
 
-// --- KAYNAK 2: MEXC (Yedek) ---
+// --- KAYNAK 2: BINANCE US (Vercel Dostu) ---
+async function getirBinanceUS(pair) {
+    try {
+        // Binance US API yapısı Global ile aynıdır
+        const url = `https://api.binance.us/api/v3/ticker/24hr?symbol=${pair}`;
+        const response = await fetchWithHeaders(url);
+        
+        if (!response.ok) return null;
+        
+        const data = await response.json();
+        
+        return {
+            kaynak: "Binance US",
+            sembol: data.symbol,
+            fiyat: parseFloat(data.lastPrice),
+            degisim_yuzde: parseFloat(data.priceChangePercent),
+            fiyat_degisim: parseFloat(data.priceChange),
+            acilis: parseFloat(data.openPrice),
+            yuksek: parseFloat(data.highPrice),
+            dusuk: parseFloat(data.lowPrice),
+            hacim_coin: parseFloat(data.volume),
+            hacim_usdt: parseFloat(data.quoteVolume),
+            agirlikli_ort: parseFloat(data.weightedAvgPrice),
+            islem_sayisi: data.count // Burada işlem sayısı kesin vardır!
+        };
+    } catch (e) { console.log("Binance US fail"); return null; }
+}
+
+// --- KAYNAK 3: MEXC (Yedek) ---
 async function getirMexc(pair) {
     try {
         const url = `https://api.mexc.com/api/v3/ticker/24hr?symbol=${pair}`;
@@ -92,8 +118,7 @@ async function getirMexc(pair) {
         
         const data = await response.json();
         
-        // MEXC bazen ağırlıklı ortalamayı null döner veya hiç vermez.
-        // Bu durumda biz hesaplarız: Toplam Para / Toplam Adet
+        // MEXC eksik verileri tamamlama
         let avgPrice = parseFloat(data.weightedAvgPrice);
         if (isNaN(avgPrice) || !avgPrice) {
             if (data.quoteVolume && data.volume) {
@@ -112,10 +137,10 @@ async function getirMexc(pair) {
             dusuk: parseFloat(data.lowPrice),
             hacim_coin: parseFloat(data.volume),
             hacim_usdt: parseFloat(data.quoteVolume),
-            agirlikli_ort: avgPrice, // Hesapladığımız değer
-            islem_sayisi: data.count || null // Yoksa null dön
+            agirlikli_ort: avgPrice, 
+            islem_sayisi: data.count || null 
         };
-    } catch (e) { console.log("Mexc fail:", e.message); return null; }
+    } catch (e) { console.log("Mexc fail"); return null; }
 }
 
 // --- ANA YÖNETİCİ ---
@@ -129,7 +154,6 @@ export default async function handler(req, res) {
         });
     }
 
-    // --- AKILLI SEMBOL DÜZELTME ---
     let symbol = kod.toUpperCase().trim();
     let pair = symbol;
 
@@ -145,18 +169,20 @@ export default async function handler(req, res) {
     }
 
     try {
-        // STRATEJİ: Önce Binance, Olmazsa MEXC
+        // STRATEJİ: Global -> US -> MEXC
         let sonuc = await getirBinance(pair);
+        
+        if (!sonuc) {
+            sonuc = await getirBinanceUS(pair);
+        }
         
         if (!sonuc) {
             sonuc = await getirMexc(pair);
         }
 
         if (sonuc) {
-            // Veri Formatlama
             const guncellemeUnix = Math.floor(Date.now() / 1000);
             
-            // Fiyat Sembolü Belirleme
             let paraBirimi = "$";
             if (pair.endsWith("TRY")) paraBirimi = "₺";
             if (pair.endsWith("BTC")) paraBirimi = "₿";
@@ -183,16 +209,15 @@ export default async function handler(req, res) {
                     acilis: formatPara(sonuc.acilis, paraBirimi),
                     hacim_24s: formatHacim(sonuc.hacim_usdt) + " " + (paraBirimi === "₺" ? "TL" : "$"), 
                     hacim_adet: formatHacim(sonuc.hacim_coin) + " Adet",
-                    // İşlem sayısı yoksa "Veri Yok" yazacak
-                    islem_sayisi: sonuc.islem_sayisi ? new Intl.NumberFormat('tr-TR').format(sonuc.islem_sayisi) : "Veri Yok",
-                    // NaN gelirse formatPara bunu "Veri Yok" olarak düzeltecek
+                    // İşlem sayısı US'den gelirse dolu olur, MEXC ise Veri Yok dönebilir
+                    islem_sayisi: sonuc.islem_sayisi ? new Intl.NumberFormat('en-US').format(sonuc.islem_sayisi) : "Veri Yok",
                     ort_fiyat: formatPara(sonuc.agirlikli_ort, paraBirimi)
                 }
             });
         } else {
             res.status(404).json({ 
                 hata: true, 
-                mesaj: `Coin verisi Binance ve MEXC'den çekilemedi (${pair}).`,
+                mesaj: `Coin verisi 3 kaynaktan da çekilemedi (${pair}).`,
                 denenen_parite: pair
             });
         }
