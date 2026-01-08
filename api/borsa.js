@@ -91,7 +91,7 @@ async function getirHisseTradingView(symbol) {
                 "price_52_week_low",  // 9: 52 Hafta Düşük
                 "price_earnings_ttm", // 10: F/K Oranı
                 "sector",             // 11: Sektör
-                "change"              // 12: TL Bazlı Değişim (YENİ)
+                "average_volume_10d_calc" // 12: 10 Günlük Ort. Hacim (GERİ GELDİ)
             ]
         };
 
@@ -111,20 +111,17 @@ async function getirHisseTradingView(symbol) {
         const hamSektor = d[11];
         const turkceSektor = SEKTOR_CEVIRI[hamSektor] || hamSektor || "Genel";
 
-        // Önceki kapanışı hesapla (Fiyat - Değişim Miktarı)
-        const fiyat = d[0];
-        const degisimTL = d[12];
+        // Önceki kapanışı hesapla (Fiyat / (1 + Değişim/100))
+        // Daha hassas hesaplama:
         let oncekiKapanis = null;
-        if (fiyat !== null && degisimTL !== null) {
-            oncekiKapanis = fiyat - degisimTL;
+        if (d[0] !== null && d[1] !== null) {
+            oncekiKapanis = d[0] / (1 + (d[1] / 100));
         }
 
         return {
             kaynak: "TradingView",
-            fiyat: fiyat,
+            fiyat: d[0],
             degisim: d[1],
-            degisim_tl: degisimTL, // TL değişimi
-            onceki_kapanis: oncekiKapanis, // Dünkü kapanış
             hacim: d[2],
             piyasa_degeri: d[3],
             baslik: d[4],
@@ -134,7 +131,9 @@ async function getirHisseTradingView(symbol) {
             yil_yuksek: d[8],
             yil_dusuk: d[9],
             fk_orani: d[10],
-            sektor: turkceSektor
+            sektor: turkceSektor,
+            ort_hacim: d[12], // BURAYA EKLENDİ
+            onceki_kapanis: oncekiKapanis
         };
 
     } catch (e) { 
@@ -239,7 +238,7 @@ export default async function handler(req, res) {
         if (sonuc) {
             const degisim = (sonuc.degisim !== null && sonuc.degisim !== undefined) ? Number(sonuc.degisim) : 0;
             
-            // Formatlama
+            // Detay Formatlama
             let gunAraligiFinal = "Veri Yok";
             if (sonuc.gun_dusuk && sonuc.gun_yuksek) {
                 gunAraligiFinal = `${formatPara(sonuc.gun_dusuk)} - ${formatPara(sonuc.gun_yuksek)}`;
@@ -258,6 +257,10 @@ export default async function handler(req, res) {
             if (sonuc.hacim) hacimFinal = formatHacim(sonuc.hacim);
             else if (sonuc.hacim_txt) hacimFinal = sonuc.hacim_txt;
 
+            // Ortalama Hacim (YENİ GELDİ)
+            let ortHacimFinal = "Veri Yok";
+            if (sonuc.ort_hacim) ortHacimFinal = formatHacim(sonuc.ort_hacim);
+
             let pdFinal = "Veri Yok";
             if (sonuc.piyasa_degeri) pdFinal = formatHacim(sonuc.piyasa_degeri);
             else if (sonuc.piyasa_degeri_txt) pdFinal = sonuc.piyasa_degeri_txt;
@@ -265,7 +268,6 @@ export default async function handler(req, res) {
             let acilisFinal = sonuc.acilis ? formatPara(sonuc.acilis, "TL") : (sonuc.acilis_txt || "Veri Yok");
             let fkFinal = sonuc.fk_orani ? sonuc.fk_orani.toFixed(2) : (sonuc.fk_txt || "Veri Yok");
             let oncekiKapanisFinal = sonuc.onceki_kapanis ? formatPara(sonuc.onceki_kapanis, "TL") : "Veri Yok";
-            let fiyatDegisimFinal = sonuc.degisim_tl ? formatPara(sonuc.degisim_tl, "TL") : "Veri Yok";
 
             const finalFiyat = sonuc.fiyat_raw ? sonuc.fiyat_raw + " TL" : formatPara(sonuc.fiyat, "TL");
             const guncellemeUnix = Math.floor(Date.now() / 1000);
@@ -280,7 +282,6 @@ export default async function handler(req, res) {
                 
                 fiyat: finalFiyat,
                 degisim_yuzde: degisim.toFixed(2),
-                degisim_tl: fiyatDegisimFinal, // YENİ: TL Değişimi
                 degisim_emoji: getTrendEmoji(degisim),
                 
                 guncelleme_unix: guncellemeUnix,
@@ -288,11 +289,12 @@ export default async function handler(req, res) {
                 not: "Veriler yasal zorunluluk gereği 15dk gecikmelidir.",
                 
                 detaylar: {
-                    onceki_kapanis: oncekiKapanisFinal, // YENİ: Dünkü Kapanış
+                    onceki_kapanis: oncekiKapanisFinal,
                     acilis: acilisFinal,
                     gun_araligi: gunAraligiFinal,
                     yil_araligi: yilAraligiFinal,
                     hacim: hacimFinal,
+                    ort_hacim: ortHacimFinal, // Detaylara eklendi
                     piyasa_degeri: pdFinal,
                     fk_orani: fkFinal
                 }
