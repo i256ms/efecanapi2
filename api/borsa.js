@@ -123,7 +123,7 @@ async function getirHisseTradingView(symbol) {
     }
 }
 
-// --- KAYNAK 2: DOVİZ.COM (Yedek) ---
+// --- KAYNAK 2: DOVİZ.COM (Yedek - HTML Scraper) ---
 async function getirHisseDoviz(symbol) {
     try {
         const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
@@ -145,6 +145,7 @@ async function getirHisseDoviz(symbol) {
             const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
             const baslik = $('title').text().split('|')[0].trim();
             
+            // Detayları topla
             const detaylar = {
                 hacim: null,
                 gun_araligi: null,
@@ -198,20 +199,27 @@ export default async function handler(req, res) {
     let sonuc = null;
 
     try {
-        // 1. TradingView
+        // 1. Önce TradingView'den çek (En hızlı ve güvenilir)
         sonuc = await getirHisseTradingView(symbol);
         
-        // Veri Tamamlama: Eğer TradingView'de F/K yoksa Doviz.com'a bak
+        // --- VERİ ZENGİNLEŞTİRME (DATA ENRICHMENT) ---
+        // Eğer TradingView geldi ama F/K oranı (price_earnings_ttm) boşsa,
+        // Doviz.com'a gidip sadece o eksik veriyi tamamla.
         if (sonuc && (sonuc.fk_orani === null || sonuc.fk_orani === undefined)) {
             try {
+                // Sadece eksik veriyi tamamlamak için Doviz.com'u çağırıyoruz
                 const dovizYedek = await getirHisseDoviz(symbol);
                 if (dovizYedek && dovizYedek.fk_txt) {
+                    // "8,45" gibi gelen metni sayıya çevir
                     sonuc.fk_orani = parseFloat(dovizYedek.fk_txt.replace(",", "."));
+                    // Kaynak bilgisini güncelleme ki ana kaynağın TradingView olduğu bilinsin
                 }
-            } catch (e) { }
+            } catch (e) { 
+                // Yedek de çalışmazsa sessizce devam et
+            }
         }
 
-        // 2. Doviz.com (Yedek)
+        // 2. Eğer TradingView tamamen başarısızsa Doviz.com'u ana kaynak yap
         if (!sonuc) {
             sonuc = await getirHisseDoviz(symbol);
         }
@@ -219,7 +227,7 @@ export default async function handler(req, res) {
         if (sonuc) {
             const degisim = (sonuc.degisim !== null && sonuc.degisim !== undefined) ? Number(sonuc.degisim) : 0;
             
-            // Formatlamalar
+            // Formatlama
             let gunAraligiFinal = "Veri Yok";
             if (sonuc.gun_dusuk && sonuc.gun_yuksek) {
                 gunAraligiFinal = `${formatPara(sonuc.gun_dusuk)} - ${formatPara(sonuc.gun_yuksek)}`;
@@ -268,9 +276,10 @@ export default async function handler(req, res) {
                 // Teknik Analiz
                 teknik_analiz: getOneri(sonuc.oneri_puani),
                 
-                // Zaman
+                // Zaman ve Not
                 guncelleme_unix: guncellemeUnix,
                 guncelleme_discord: `<t:${guncellemeUnix}:R>`,
+                not: "Veriler yasal zorunluluk gereği 15dk gecikmelidir.",
                 
                 detaylar: {
                     acilis: acilisFinal,
@@ -286,6 +295,7 @@ export default async function handler(req, res) {
             res.status(404).json({ 
                 hata: true, 
                 mesaj: `Hisse verisi TradingView ve Doviz.com'dan çekilemedi (${symbol}).`,
+                sebep: "Kod hatalı olabilir veya kaynaklar yanıt vermiyor."
             });
         }
     } catch (err) {
