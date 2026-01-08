@@ -1,3 +1,41 @@
+// --- İSİM SÖZLÜĞÜ (Kısaltmaları Güzelleştirir) ---
+const ISIMLER = {
+    "USD": "ABD Doları",
+    "EUR": "Euro",
+    "GBP": "İngiliz Sterlini",
+    "CHF": "İsviçre Frangı",
+    "CAD": "Kanada Doları",
+    "RUB": "Rus Rublesi",
+    "AED": "BAE Dirhemi",
+    "AUD": "Avustralya Doları",
+    "DKK": "Danimarka Kronu",
+    "SEK": "İsveç Kronu",
+    "NOK": "Norveç Kronu",
+    "JPY": "Japon Yeni",
+    "CNY": "Çin Yuanı",
+    "SAR": "Suudi Arabistan Riyali",
+    "TRY": "Türk Lirası",
+    
+    // Altın ve Emtia
+    "gram-altin": "Gram Altın",
+    "ceyrek-altin": "Çeyrek Altın",
+    "yarim-altin": "Yarım Altın",
+    "tam-altin": "Tam Altın",
+    "cumhuriyet-altini": "Cumhuriyet Altını",
+    "ata-altin": "Ata Altın",
+    "resat-altin": "Reşat Altın",
+    "22-ayar-bilezik": "22 Ayar Bilezik",
+    "18-ayar-altin": "18 Ayar Altın",
+    "14-ayar-altin": "14 Ayar Altın",
+    "has-altin": "Has Altın",
+    "gumus": "Gümüş",
+    "ons": "Ons Altın",
+    "brent-petrol": "Brent Petrol",
+    "platin": "Platin",
+    "paladyum": "Paladyum",
+    "dogalgaz": "Doğalgaz"
+};
+
 // --- YARDIMCI FONKSİYONLAR ---
 
 // Esnek Sayı Okuyucu
@@ -26,7 +64,6 @@ function parseNumber(str) {
 function formatPara(sayi, sembol = "") {
     if (sayi === null || sayi === undefined || isNaN(sayi)) return "Veri Yok";
     
-    // Çok küçük pariteler için hassasiyeti artır
     let maxDigits = 2;
     const absVal = Math.abs(sayi);
     
@@ -62,7 +99,7 @@ function cozAnahtar(hamKod) {
     if (aranan === "KANADA DOLARI" || aranan === "CAD") return "CAD";
     if (aranan === "RUS RUBLESI" || aranan === "RUB") return "RUB";
     if (aranan === "CIN YUANI" || aranan === "CNY") return "CNY";
-    if (aranan === "TURK LIRASI" || aranan === "TL" || aranan === "TRY") return "TRY"; // TL eklendi
+    if (aranan === "TURK LIRASI" || aranan === "TL" || aranan === "TRY") return "TRY";
     
     if (aranan === "ALTIN" || aranan === "GRAM" || aranan === "GRAM-ALTIN") return "gram-altin";
     if (aranan === "CEYREK" || aranan === "ÇEYREK") return "ceyrek-altin";
@@ -82,6 +119,11 @@ function cozAnahtar(hamKod) {
     return aranan;
 }
 
+// İsim Bulucu (Güzelleştirici)
+function getGuzelIsim(kod) {
+    return ISIMLER[kod] || kod.toUpperCase().replace(/-/g, " ");
+}
+
 async function fetchWithHeaders(url) {
     return await fetch(url, {
         headers: {
@@ -94,16 +136,10 @@ async function fetchWithHeaders(url) {
 export default async function handler(req, res) {
     const { kod, from, to } = req.query;
 
-    // Giriş Kontrolü: Ya 'kod' olacak ya da 'from' ve 'to'
     if (!kod && (!from || !to)) {
         return res.status(400).json({
             hata: true,
-            mesaj: "Eksik parametre. Lütfen 'kod' VEYA 'from' ve 'to' girin.",
-            ornekler: [
-                "/api/doviz?kod=USD",
-                "/api/doviz?from=USD&to=EUR",
-                "/api/doviz?from=GRAM&to=TL"
-            ]
+            mesaj: "Eksik parametre. Lütfen 'kod' VEYA 'from' ve 'to' girin."
         });
     }
 
@@ -123,17 +159,13 @@ export default async function handler(req, res) {
         let quoteCode = "";
         let singleCode = "";
 
-        // 1. Yöntem: ?from=USD&to=TRY (En Temizi)
         if (from && to) {
             pariteModu = true;
             baseCode = cozAnahtar(from);
             quoteCode = cozAnahtar(to);
-        } 
-        // 2. Yöntem: ?kod=USD/TRY (Eski Usül)
-        else if (kod) {
+        } else if (kod) {
             const hamKod = kod.toUpperCase().trim();
             const ayiricilar = ["/", "-", " "];
-            
             for (const sep of ayiricilar) {
                 if (hamKod.includes(sep)) {
                     const parts = hamKod.split(sep);
@@ -152,37 +184,32 @@ export default async function handler(req, res) {
 
         // --- HESAPLAMA MOTORU (Çapraz Kur) ---
         if (pariteModu) {
-            // Eğer hedef TRY ise direkt base'in fiyatını getiririz
             if (quoteCode === "TRY") {
-                singleCode = baseCode; // Aşağıdaki tekli sorgu bloğuna düşsün
+                singleCode = baseCode; 
             } else {
-                // İki para birimini de çek (İkisi de TL bazlıdır)
                 const baseVeri = data[baseCode] || data[baseCode.replace("-", " ").toUpperCase()] || data[baseCode.toLowerCase()];
-                // Eğer baseCode TRY ise fiyatı 1 kabul et
                 const baseFiyat = baseCode === "TRY" ? 1 : parseNumber(baseVeri?.Satış);
                 
                 const quoteVeri = data[quoteCode] || data[quoteCode.replace("-", " ").toUpperCase()] || data[quoteCode.toLowerCase()];
-                // Eğer quoteCode TRY ise fiyatı 1 kabul et (Yukarıdaki if bunu yakalar ama garanti olsun)
                 const quoteFiyat = quoteCode === "TRY" ? 1 : parseNumber(quoteVeri?.Satış);
 
                 if (baseFiyat && quoteFiyat) {
-                    // Değişimleri çek (% stringini sayıya çevir)
                     const baseDegisim = baseCode === "TRY" ? 0 : parseFloat((baseVeri["Değişim"] || "0").replace("%", "").replace(",", "."));
                     const quoteDegisim = quoteCode === "TRY" ? 0 : parseFloat((quoteVeri["Değişim"] || "0").replace("%", "").replace(",", "."));
 
-                    // Çapraz Kur Hesabı
                     const pariteFiyati = baseFiyat / quoteFiyat;
-                    
-                    // Çapraz Değişim Hesabı (Yaklaşık)
-                    // (1 + base%) / (1 + quote%) - 1
                     const pariteDegisim = ((1 + baseDegisim/100) / (1 + quoteDegisim/100) - 1) * 100;
-
                     const guncellemeUnix = Math.floor(Date.now() / 1000);
+
+                    // İsimleri güzelleştiriyoruz
+                    const baseIsim = getGuzelIsim(baseCode);
+                    const quoteIsim = getGuzelIsim(quoteCode);
 
                     return res.status(200).json({
                         tur: "Çapraz Kur (Hesaplanan)",
                         sembol: `${baseCode}/${quoteCode}`,
-                        baslik: `${baseCode} / ${quoteCode} Paritesi`,
+                        // BURASI ARTIK GÜZEL GÖRÜNECEK
+                        baslik: `${baseIsim} / ${quoteIsim} Paritesi`,
                         kaynak: "Truncgil (Hesaplamalı)",
                         
                         fiyat: formatPara(pariteFiyati),
@@ -193,8 +220,8 @@ export default async function handler(req, res) {
                         guncelleme_discord: `<t:${guncellemeUnix}:R>`,
                         
                         detaylar: {
-                            base: { kod: baseCode, fiyat: formatPara(baseFiyat, "TL") },
-                            quote: { kod: quoteCode, fiyat: formatPara(quoteFiyat, "TL") },
+                            base: { kod: baseCode, isim: baseIsim, fiyat: formatPara(baseFiyat, "TL") },
+                            quote: { kod: quoteCode, isim: quoteIsim, fiyat: formatPara(quoteFiyat, "TL") },
                             not: "Bu veriler TL kurları üzerinden oranlanmıştır."
                         }
                     });
@@ -202,9 +229,7 @@ export default async function handler(req, res) {
             }
         }
 
-        // --- TEKLİ SORGULAMA (STANDART TL BAZLI) ---
-        // Eğer parite değilse veya hedef TRY ise buraya düşer
-        
+        // --- TEKLİ SORGULAMA ---
         let veri = data[singleCode] || data[singleCode.replace("-", " ").toUpperCase()] || data[singleCode.toLowerCase()];
 
         if (!veri && singleCode === "ons") {
@@ -237,10 +262,13 @@ export default async function handler(req, res) {
         if (singleCode === "ons") paraBirimi = "$";
         if (singleCode === "EUR" && (kod || "").includes("PARITE")) paraBirimi = "";
 
+        // İsim Güzelleştirme
+        const guzelIsim = getGuzelIsim(singleCode);
+
         res.status(200).json({
             tur: "Piyasa (Döviz/Altın/Emtia)",
             sembol: singleCode.toUpperCase().replace(/-/g, " "),
-            baslik: singleCode.toUpperCase().replace(/-/g, " "),
+            baslik: guzelIsim, // GBP yerine "İngiliz Sterlini" yazacak
             kaynak: "Truncgil",
             
             fiyat: formatPara(satis, paraBirimi), 
