@@ -38,12 +38,10 @@ function formatPara(sayi, sembol = "") {
     return sembol ? `${formatted} ${sembol}` : formatted;
 }
 
-// ARTIK KISALTMA YOK: Sayıları tam formatta yazar (1.234.567)
 function formatHacim(sayi) {
     if (!sayi || sayi === "Veri Yok") return "Veri Yok";
     if (typeof sayi === 'string') return sayi;
 
-    // Tam sayı formatı (Virgül yok, sadece binlik ayırıcı nokta)
     return new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 0 }).format(sayi);
 }
 
@@ -54,15 +52,6 @@ function getTrendEmoji(degisim) {
     if (d > 0) return "🟢"; 
     if (d < 0) return "🔴"; 
     return "⚪"; 
-}
-
-function getOneri(score) {
-    if (score === null || score === undefined) return "Nötr ⚪";
-    if (score >= 0.5) return "Güçlü Al 🟢";
-    if (score >= 0.1) return "Al 🟢";
-    if (score > -0.1) return "Nötr ⚪";
-    if (score > -0.5) return "Sat 🔴";
-    return "Güçlü Sat 🔴";
 }
 
 function getPiyasaDurumu() {
@@ -90,11 +79,19 @@ async function getirHisseTradingView(symbol) {
         const body = {
             "symbols": { "tickers": [`BIST:${symbol}`] },
             "columns": [
-                "close", "change|1d", "volume", "market_cap_basic", 
-                "description", "high", "low", "open", 
-                "price_52_week_high", "price_52_week_low", 
-                "price_earnings_ttm", "sector", "Recommend.All", 
-                "average_volume_10d_calc"
+                "close",              // 0: Son Fiyat
+                "change|1d",          // 1: Değişim %
+                "volume",             // 2: Hacim
+                "market_cap_basic",   // 3: Piyasa Değeri
+                "description",        // 4: Şirket Adı
+                "high",               // 5: Gün Yüksek
+                "low",                // 6: Gün Düşük
+                "open",               // 7: Açılış
+                "price_52_week_high", // 8: 52 Hafta Yüksek
+                "price_52_week_low",  // 9: 52 Hafta Düşük
+                "price_earnings_ttm", // 10: F/K Oranı
+                "sector",             // 11: Sektör
+                "change"              // 12: TL Bazlı Değişim (YENİ)
             ]
         };
 
@@ -114,10 +111,20 @@ async function getirHisseTradingView(symbol) {
         const hamSektor = d[11];
         const turkceSektor = SEKTOR_CEVIRI[hamSektor] || hamSektor || "Genel";
 
+        // Önceki kapanışı hesapla (Fiyat - Değişim Miktarı)
+        const fiyat = d[0];
+        const degisimTL = d[12];
+        let oncekiKapanis = null;
+        if (fiyat !== null && degisimTL !== null) {
+            oncekiKapanis = fiyat - degisimTL;
+        }
+
         return {
             kaynak: "TradingView",
-            fiyat: d[0],
+            fiyat: fiyat,
             degisim: d[1],
+            degisim_tl: degisimTL, // TL değişimi
+            onceki_kapanis: oncekiKapanis, // Dünkü kapanış
             hacim: d[2],
             piyasa_degeri: d[3],
             baslik: d[4],
@@ -127,9 +134,7 @@ async function getirHisseTradingView(symbol) {
             yil_yuksek: d[8],
             yil_dusuk: d[9],
             fk_orani: d[10],
-            sektor: turkceSektor, // Çevrilmiş hali
-            oneri_puani: d[12],
-            ort_hacim: d[13]
+            sektor: turkceSektor
         };
 
     } catch (e) { 
@@ -234,7 +239,7 @@ export default async function handler(req, res) {
         if (sonuc) {
             const degisim = (sonuc.degisim !== null && sonuc.degisim !== undefined) ? Number(sonuc.degisim) : 0;
             
-            // Detay Formatlama
+            // Formatlama
             let gunAraligiFinal = "Veri Yok";
             if (sonuc.gun_dusuk && sonuc.gun_yuksek) {
                 gunAraligiFinal = `${formatPara(sonuc.gun_dusuk)} - ${formatPara(sonuc.gun_yuksek)}`;
@@ -249,12 +254,9 @@ export default async function handler(req, res) {
                 yilAraligiFinal = sonuc.yil_araligi_txt;
             }
 
-            // Hacim & Piyasa Değeri (ARTIK TAM SAYI OLARAK FORMATLANIR)
             let hacimFinal = "Veri Yok";
             if (sonuc.hacim) hacimFinal = formatHacim(sonuc.hacim);
             else if (sonuc.hacim_txt) hacimFinal = sonuc.hacim_txt;
-
-            let ortHacimFinal = sonuc.ort_hacim ? formatHacim(sonuc.ort_hacim) : "Veri Yok";
 
             let pdFinal = "Veri Yok";
             if (sonuc.piyasa_degeri) pdFinal = formatHacim(sonuc.piyasa_degeri);
@@ -262,6 +264,8 @@ export default async function handler(req, res) {
 
             let acilisFinal = sonuc.acilis ? formatPara(sonuc.acilis, "TL") : (sonuc.acilis_txt || "Veri Yok");
             let fkFinal = sonuc.fk_orani ? sonuc.fk_orani.toFixed(2) : (sonuc.fk_txt || "Veri Yok");
+            let oncekiKapanisFinal = sonuc.onceki_kapanis ? formatPara(sonuc.onceki_kapanis, "TL") : "Veri Yok";
+            let fiyatDegisimFinal = sonuc.degisim_tl ? formatPara(sonuc.degisim_tl, "TL") : "Veri Yok";
 
             const finalFiyat = sonuc.fiyat_raw ? sonuc.fiyat_raw + " TL" : formatPara(sonuc.fiyat, "TL");
             const guncellemeUnix = Math.floor(Date.now() / 1000);
@@ -276,20 +280,19 @@ export default async function handler(req, res) {
                 
                 fiyat: finalFiyat,
                 degisim_yuzde: degisim.toFixed(2),
+                degisim_tl: fiyatDegisimFinal, // YENİ: TL Değişimi
                 degisim_emoji: getTrendEmoji(degisim),
-                
-                teknik_analiz: getOneri(sonuc.oneri_puani),
                 
                 guncelleme_unix: guncellemeUnix,
                 guncelleme_discord: `<t:${guncellemeUnix}:R>`,
                 not: "Veriler yasal zorunluluk gereği 15dk gecikmelidir.",
                 
                 detaylar: {
+                    onceki_kapanis: oncekiKapanisFinal, // YENİ: Dünkü Kapanış
                     acilis: acilisFinal,
                     gun_araligi: gunAraligiFinal,
                     yil_araligi: yilAraligiFinal,
                     hacim: hacimFinal,
-                    ort_hacim: ortHacimFinal,
                     piyasa_degeri: pdFinal,
                     fk_orani: fkFinal
                 }
