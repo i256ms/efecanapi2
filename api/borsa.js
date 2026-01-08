@@ -17,14 +17,13 @@ function formatHacim(sayi) {
     if (!sayi || sayi === "Veri Yok") return "Veri Yok";
     if (typeof sayi === 'string') return sayi;
 
-    if (sayi >= 1.0e+9) return (sayi / 1.0e+9).toFixed(2).replace(".", ",") + " Mr";
-    if (sayi >= 1.0e+6) return (sayi / 1.0e+6).toFixed(2).replace(".", ",") + " Mn";
-    if (sayi >= 1.0e+3) return (sayi / 1.0e+3).toFixed(2).replace(".", ",") + " B";
+    if (sayi >= 1.0e+9) return (sayi / 1.0e+9).toFixed(2).replace(".", ",") + " Mr"; // Milyar
+    if (sayi >= 1.0e+6) return (sayi / 1.0e+6).toFixed(2).replace(".", ",") + " Mn"; // Milyon
+    if (sayi >= 1.0e+3) return (sayi / 1.0e+3).toFixed(2).replace(".", ",") + " B";  // Bin
     return sayi.toString();
 }
 
 function getTrendEmoji(degisim) {
-    // Null veya undefined gelirse nötr döndür
     if (degisim === null || degisim === undefined) return "⚪";
     const d = parseFloat(degisim);
     if (isNaN(d)) return "➖";
@@ -33,29 +32,18 @@ function getTrendEmoji(degisim) {
     return "⚪"; 
 }
 
-// --- KAYNAK 1: TRADINGVIEW (JSON API - Ultra Detaylı) ---
+// --- KAYNAK 1: TRADINGVIEW (JSON API - Hızlı) ---
 async function getirHisseTradingView(symbol) {
     try {
         const url = "https://scanner.tradingview.com/turkey/scan";
         
-        // TradingView'den çok daha fazla sütun istiyoruz
         const body = {
-            "symbols": {
-                "tickers": [`BIST:${symbol}`] 
-            },
+            "symbols": { "tickers": [`BIST:${symbol}`] },
             "columns": [
-                "close",              // 0: Son Fiyat
-                "change|1d",          // 1: Değişim %
-                "volume",             // 2: Hacim
-                "market_cap_basic",   // 3: Piyasa Değeri
-                "description",        // 4: Şirket Adı
-                "high",               // 5: Gün Yüksek
-                "low",                // 6: Gün Düşük
-                "open",               // 7: Açılış
-                "price_52_week_high", // 8: 52 Hafta Yüksek
-                "price_52_week_low",  // 9: 52 Hafta Düşük
-                "price_earnings_ttm", // 10: F/K Oranı
-                "sector"              // 11: Sektör
+                "close", "change|1d", "volume", "market_cap_basic", 
+                "description", "high", "low", "open", 
+                "price_52_week_high", "price_52_week_low", 
+                "price_earnings_ttm", "sector"
             ]
         };
 
@@ -66,9 +54,7 @@ async function getirHisseTradingView(symbol) {
         });
 
         if (!response.ok) return null;
-
         const json = await response.json();
-        
         if (!json.data || json.data.length === 0) return null;
 
         const d = json.data[0].d; 
@@ -85,7 +71,7 @@ async function getirHisseTradingView(symbol) {
             acilis: d[7],
             yil_yuksek: d[8],
             yil_dusuk: d[9],
-            fk_orani: d[10],
+            fk_orani: d[10], // Bazen null gelebilir
             sektor: d[11]
         };
 
@@ -95,7 +81,7 @@ async function getirHisseTradingView(symbol) {
     }
 }
 
-// --- KAYNAK 2: DOVİZ.COM (Yedek - HTML Scraper) ---
+// --- KAYNAK 2: DOVİZ.COM (Yedek & Tamamlayıcı) ---
 async function getirHisseDoviz(symbol) {
     try {
         const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
@@ -136,7 +122,7 @@ async function getirHisseDoviz(symbol) {
                 if (label.includes("Piyasa Değeri")) detaylar.piyasa_degeri = val;
                 if (label.includes("Açılış")) detaylar.acilis = val;
                 if (label.includes("Yıllık Aralık")) detaylar.yil_araligi = val;
-                if (label.includes("F/K")) detaylar.fk = val;
+                if (label.includes("F/K")) detaylar.fk = val; // F/K Oranını buradan yakalayacağız
             });
 
             return {
@@ -171,9 +157,27 @@ export default async function handler(req, res) {
     let sonuc = null;
 
     try {
-        // Strateji: TradingView -> Doviz.com
+        // 1. Önce TradingView'den çek (En hızlı ve güvenilir)
         sonuc = await getirHisseTradingView(symbol);
         
+        // --- VERİ ZENGİNLEŞTİRME (DATA ENRICHMENT) ---
+        // Eğer TradingView geldi ama F/K oranı (price_earnings_ttm) boşsa,
+        // Doviz.com'a gidip sadece o eksik veriyi tamamla.
+        if (sonuc && (sonuc.fk_orani === null || sonuc.fk_orani === undefined)) {
+            try {
+                // Sadece eksik veriyi tamamlamak için Doviz.com'u çağırıyoruz
+                const dovizYedek = await getirHisseDoviz(symbol);
+                if (dovizYedek && dovizYedek.fk_txt) {
+                    // "8,45" gibi gelen metni sayıya çevir
+                    sonuc.fk_orani = parseFloat(dovizYedek.fk_txt.replace(",", "."));
+                    // Kaynak bilgisini güncelleme ki ana kaynağın TradingView olduğu bilinsin
+                }
+            } catch (e) { 
+                // Yedek de çalışmazsa sessizce devam et
+            }
+        }
+
+        // 2. Eğer TradingView tamamen başarısızsa Doviz.com'u ana kaynak yap
         if (!sonuc) {
             sonuc = await getirHisseDoviz(symbol);
         }
@@ -181,9 +185,7 @@ export default async function handler(req, res) {
         if (sonuc) {
             const degisim = (sonuc.degisim !== null && sonuc.degisim !== undefined) ? Number(sonuc.degisim) : 0;
             
-            // Formatlama İşlemleri
-            
-            // Gün Aralığı
+            // Formatlama
             let gunAraligiFinal = "Veri Yok";
             if (sonuc.gun_dusuk && sonuc.gun_yuksek) {
                 gunAraligiFinal = `${formatPara(sonuc.gun_dusuk)} - ${formatPara(sonuc.gun_yuksek)}`;
@@ -191,7 +193,6 @@ export default async function handler(req, res) {
                 gunAraligiFinal = sonuc.gun_araligi_txt;
             }
 
-            // Yıl Aralığı (YENİ)
             let yilAraligiFinal = "Veri Yok";
             if (sonuc.yil_dusuk && sonuc.yil_yuksek) {
                 yilAraligiFinal = `${formatPara(sonuc.yil_dusuk)} - ${formatPara(sonuc.yil_yuksek)}`;
@@ -199,7 +200,6 @@ export default async function handler(req, res) {
                 yilAraligiFinal = sonuc.yil_araligi_txt;
             }
 
-            // Hacim & Piyasa Değeri
             let hacimFinal = "Veri Yok";
             if (sonuc.hacim) hacimFinal = formatHacim(sonuc.hacim);
             else if (sonuc.hacim_txt) hacimFinal = sonuc.hacim_txt;
@@ -208,7 +208,6 @@ export default async function handler(req, res) {
             if (sonuc.piyasa_degeri) pdFinal = formatHacim(sonuc.piyasa_degeri);
             else if (sonuc.piyasa_degeri_txt) pdFinal = sonuc.piyasa_degeri_txt;
 
-            // Diğer Detaylar
             let acilisFinal = sonuc.acilis ? formatPara(sonuc.acilis, "TL") : (sonuc.acilis_txt || "Veri Yok");
             let fkFinal = sonuc.fk_orani ? sonuc.fk_orani.toFixed(2) : (sonuc.fk_txt || "Veri Yok");
 
