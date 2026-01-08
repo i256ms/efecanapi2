@@ -25,19 +25,15 @@ function formatPara(sayi, sembol = "") {
     return sembol ? `${formatted} ${sembol}` : formatted;
 }
 
-// ARTIK KISALTMA YOK: Hacmi tam sayı olarak formatlar (1.234.567,89)
 function formatHacim(sayi) {
     if (!sayi && sayi !== 0) return "Veri Yok";
     if (typeof sayi === 'string') sayi = parseFloat(sayi);
     if (isNaN(sayi)) return "Veri Yok";
 
-    // Tam sayı formatı (Binlik ayırıcı virgül, ondalık nokta - İngilizce formatı, çünkü kripto genelde $ bazlıdır)
-    // İstersen tr-TR yapıp binlikleri nokta ile de ayırabiliriz, ama kriptoda genelde en-US standardı kullanılır.
-    // Senin diğer API'lerdeki standartın (tr-TR) ile uyumlu olsun diye tr-TR yapıyorum.
-    return new Intl.NumberFormat('tr-TR', { 
-        minimumFractionDigits: 2, 
-        maximumFractionDigits: 2 
-    }).format(sayi);
+    if (sayi >= 1.0e+9) return (sayi / 1.0e+9).toFixed(2) + " Mr"; 
+    if (sayi >= 1.0e+6) return (sayi / 1.0e+6).toFixed(2) + " Mn"; 
+    if (sayi >= 1.0e+3) return (sayi / 1.0e+3).toFixed(2) + " B";  
+    return sayi.toFixed(2);
 }
 
 function getTrendEmoji(degisim) {
@@ -55,6 +51,31 @@ async function fetchWithHeaders(url) {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
     });
+}
+
+// --- İSİM BULUCU (CoinPaprika API) ---
+// Binance Ticker API isim vermediği için, ismini buradan buluyoruz.
+async function getCoinIsmiDinamik(symbol) {
+    try {
+        // CoinPaprika arama servisi (Ücretsiz ve hızlı)
+        const url = `https://api.coinpaprika.com/v1/search?q=${symbol}&c=currencies&limit=1`;
+        const response = await fetchWithHeaders(url);
+        
+        if (response.ok) {
+            const json = await response.json();
+            // Eğer sonuç varsa ve sembol eşleşiyorsa ismi al
+            if (json.currencies && json.currencies.length > 0) {
+                const coin = json.currencies[0];
+                if (coin.symbol.toUpperCase() === symbol.toUpperCase()) {
+                    return coin.name; // Örn: "Bitcoin"
+                }
+            }
+        }
+    } catch (e) {
+        console.log("İsim bulma hatası:", e.message);
+    }
+    // Bulamazsa sembolü olduğu gibi döndür (Örn: BTC)
+    return symbol;
 }
 
 // --- KAYNAK 1: BINANCE GLOBAL ---
@@ -84,7 +105,7 @@ async function getirBinance(pair) {
     } catch (e) { console.log("Binance fail"); return null; }
 }
 
-// --- KAYNAK 2: BINANCE US (Vercel Dostu) ---
+// --- KAYNAK 2: BINANCE US ---
 async function getirBinanceUS(pair) {
     try {
         const url = `https://api.binance.us/api/v3/ticker/24hr?symbol=${pair}`;
@@ -111,7 +132,7 @@ async function getirBinanceUS(pair) {
     } catch (e) { console.log("Binance US fail"); return null; }
 }
 
-// --- KAYNAK 3: MEXC (Yedek) ---
+// --- KAYNAK 3: MEXC ---
 async function getirMexc(pair) {
     try {
         const url = `https://api.mexc.com/api/v3/ticker/24hr?symbol=${pair}`;
@@ -171,16 +192,19 @@ export default async function handler(req, res) {
     }
 
     try {
-        // STRATEJİ: Global -> US -> MEXC
-        let sonuc = await getirBinance(pair);
-        
-        if (!sonuc) {
-            sonuc = await getirBinanceUS(pair);
-        }
-        
-        if (!sonuc) {
-            sonuc = await getirMexc(pair);
-        }
+        // Paralel İşlem: Hem fiyatı hem de ismi aynı anda ara
+        // (Böylece isim aramak hızı düşürmez)
+        const [sonuc, coinIsmi] = await Promise.all([
+            // Fiyatı bul
+            (async () => {
+                let res = await getirBinance(pair);
+                if (!res) res = await getirBinanceUS(pair);
+                if (!res) res = await getirMexc(pair);
+                return res;
+            })(),
+            // İsmi bul
+            getCoinIsmiDinamik(symbol)
+        ]);
 
         if (sonuc) {
             const guncellemeUnix = Math.floor(Date.now() / 1000);
@@ -193,6 +217,7 @@ export default async function handler(req, res) {
             res.status(200).json({
                 tur: "Kripto Para",
                 sembol: symbol,
+                isim: coinIsmi, // ARTIK DİNAMİK GELİYOR (Bitcoin, Ethereum vb.)
                 parite: sonuc.sembol,
                 kaynak: sonuc.kaynak,
                 
@@ -211,14 +236,14 @@ export default async function handler(req, res) {
                     acilis: formatPara(sonuc.acilis, paraBirimi),
                     hacim_24s: formatHacim(sonuc.hacim_usdt) + " " + (paraBirimi === "₺" ? "TL" : "$"), 
                     hacim_adet: formatHacim(sonuc.hacim_coin) + " Adet",
-                    islem_sayisi: sonuc.islem_sayisi ? new Intl.NumberFormat('tr-TR').format(sonuc.islem_sayisi) : "Veri Yok",
+                    islem_sayisi: sonuc.islem_sayisi ? new Intl.NumberFormat('en-US').format(sonuc.islem_sayisi) : "Veri Yok",
                     ort_fiyat: formatPara(sonuc.agirlikli_ort, paraBirimi)
                 }
             });
         } else {
             res.status(404).json({ 
                 hata: true, 
-                mesaj: `Coin verisi Binance ve MEXC'den çekilemedi (${pair}).`,
+                mesaj: `Coin verisi 3 kaynaktan da çekilemedi (${pair}).`,
                 denenen_parite: pair
             });
         }
