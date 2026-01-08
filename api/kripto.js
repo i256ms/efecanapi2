@@ -25,15 +25,19 @@ function formatPara(sayi, sembol = "") {
     return sembol ? `${formatted} ${sembol}` : formatted;
 }
 
+// ARTIK KISALTMA YOK: Hacmi tam sayı olarak formatlar (1.234.567,89)
 function formatHacim(sayi) {
     if (!sayi && sayi !== 0) return "Veri Yok";
     if (typeof sayi === 'string') sayi = parseFloat(sayi);
     if (isNaN(sayi)) return "Veri Yok";
 
-    if (sayi >= 1.0e+9) return (sayi / 1.0e+9).toFixed(2) + " Mr"; 
-    if (sayi >= 1.0e+6) return (sayi / 1.0e+6).toFixed(2) + " Mn"; 
-    if (sayi >= 1.0e+3) return (sayi / 1.0e+3).toFixed(2) + " B";  
-    return sayi.toFixed(2);
+    // Tam sayı formatı (Binlik ayırıcı virgül, ondalık nokta - İngilizce formatı, çünkü kripto genelde $ bazlıdır)
+    // İstersen tr-TR yapıp binlikleri nokta ile de ayırabiliriz, ama kriptoda genelde en-US standardı kullanılır.
+    // Senin diğer API'lerdeki standartın (tr-TR) ile uyumlu olsun diye tr-TR yapıyorum.
+    return new Intl.NumberFormat('tr-TR', { 
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 2 
+    }).format(sayi);
 }
 
 function getTrendEmoji(degisim) {
@@ -83,7 +87,6 @@ async function getirBinance(pair) {
 // --- KAYNAK 2: BINANCE US (Vercel Dostu) ---
 async function getirBinanceUS(pair) {
     try {
-        // Binance US API yapısı Global ile aynıdır
         const url = `https://api.binance.us/api/v3/ticker/24hr?symbol=${pair}`;
         const response = await fetchWithHeaders(url);
         
@@ -103,7 +106,7 @@ async function getirBinanceUS(pair) {
             hacim_coin: parseFloat(data.volume),
             hacim_usdt: parseFloat(data.quoteVolume),
             agirlikli_ort: parseFloat(data.weightedAvgPrice),
-            islem_sayisi: data.count // Burada işlem sayısı kesin vardır!
+            islem_sayisi: data.count
         };
     } catch (e) { console.log("Binance US fail"); return null; }
 }
@@ -118,7 +121,6 @@ async function getirMexc(pair) {
         
         const data = await response.json();
         
-        // MEXC eksik verileri tamamlama
         let avgPrice = parseFloat(data.weightedAvgPrice);
         if (isNaN(avgPrice) || !avgPrice) {
             if (data.quoteVolume && data.volume) {
@@ -209,15 +211,14 @@ export default async function handler(req, res) {
                     acilis: formatPara(sonuc.acilis, paraBirimi),
                     hacim_24s: formatHacim(sonuc.hacim_usdt) + " " + (paraBirimi === "₺" ? "TL" : "$"), 
                     hacim_adet: formatHacim(sonuc.hacim_coin) + " Adet",
-                    // İşlem sayısı US'den gelirse dolu olur, MEXC ise Veri Yok dönebilir
-                    islem_sayisi: sonuc.islem_sayisi ? new Intl.NumberFormat('en-US').format(sonuc.islem_sayisi) : "Veri Yok",
+                    islem_sayisi: sonuc.islem_sayisi ? new Intl.NumberFormat('tr-TR').format(sonuc.islem_sayisi) : "Veri Yok",
                     ort_fiyat: formatPara(sonuc.agirlikli_ort, paraBirimi)
                 }
             });
         } else {
             res.status(404).json({ 
                 hata: true, 
-                mesaj: `Coin verisi 3 kaynaktan da çekilemedi (${pair}).`,
+                mesaj: `Coin verisi Binance ve MEXC'den çekilemedi (${pair}).`,
                 denenen_parite: pair
             });
         }
