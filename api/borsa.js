@@ -33,23 +33,29 @@ function getTrendEmoji(degisim) {
     return "⚪"; 
 }
 
-// --- KAYNAK 1: TRADINGVIEW (JSON API) ---
+// --- KAYNAK 1: TRADINGVIEW (JSON API - Ultra Detaylı) ---
 async function getirHisseTradingView(symbol) {
     try {
         const url = "https://scanner.tradingview.com/turkey/scan";
         
+        // TradingView'den çok daha fazla sütun istiyoruz
         const body = {
             "symbols": {
                 "tickers": [`BIST:${symbol}`] 
             },
             "columns": [
-                "close",        // 0: Son Fiyat
-                "change|1d",    // 1: Değişim %
-                "volume",       // 2: Hacim
-                "market_cap_basic", // 3: Piyasa Değeri
-                "description",  // 4: Şirket Adı
-                "high",         // 5: Gün Yüksek
-                "low"           // 6: Gün Düşük
+                "close",              // 0: Son Fiyat
+                "change|1d",          // 1: Değişim %
+                "volume",             // 2: Hacim
+                "market_cap_basic",   // 3: Piyasa Değeri
+                "description",        // 4: Şirket Adı
+                "high",               // 5: Gün Yüksek
+                "low",                // 6: Gün Düşük
+                "open",               // 7: Açılış
+                "price_52_week_high", // 8: 52 Hafta Yüksek
+                "price_52_week_low",  // 9: 52 Hafta Düşük
+                "price_earnings_ttm", // 10: F/K Oranı
+                "sector"              // 11: Sektör
             ]
         };
 
@@ -70,12 +76,17 @@ async function getirHisseTradingView(symbol) {
         return {
             kaynak: "TradingView",
             fiyat: d[0],
-            degisim: d[1], // Bu bazen null gelebilir
+            degisim: d[1],
             hacim: d[2],
             piyasa_degeri: d[3],
             baslik: d[4],
             gun_yuksek: d[5],
-            gun_dusuk: d[6]
+            gun_dusuk: d[6],
+            acilis: d[7],
+            yil_yuksek: d[8],
+            yil_dusuk: d[9],
+            fk_orani: d[10],
+            sektor: d[11]
         };
 
     } catch (e) { 
@@ -84,7 +95,7 @@ async function getirHisseTradingView(symbol) {
     }
 }
 
-// --- KAYNAK 2: DOVİZ.COM (Yedek) ---
+// --- KAYNAK 2: DOVİZ.COM (Yedek - HTML Scraper) ---
 async function getirHisseDoviz(symbol) {
     try {
         const url = `https://borsa.doviz.com/hisseler/${symbol.toLowerCase()}`;
@@ -106,27 +117,39 @@ async function getirHisseDoviz(symbol) {
             const degisimText = $('div[class*="text-md"]').first().text().replace("%", "").trim();
             const baslik = $('title').text().split('|')[0].trim();
             
-            let hacim = null;
-            let gunAraligi = null;
-            let piyasaDegeri = null;
+            // Detayları topla
+            const detaylar = {
+                hacim: null,
+                gun_araligi: null,
+                piyasa_degeri: null,
+                acilis: null,
+                yil_araligi: null,
+                fk: null
+            };
             
             $('.value-table-row').each((i, el) => {
                 const label = $(el).find('.label').text().trim(); 
                 const val = $(el).find('.value').text().trim();
-                if (label.includes("Hacim")) hacim = val;
-                if (label.includes("Gün Aralığı")) gunAraligi = val;
-                if (label.includes("Piyasa Değeri")) piyasaDegeri = val;
+                
+                if (label.includes("Hacim")) detaylar.hacim = val;
+                if (label.includes("Gün Aralığı")) detaylar.gun_araligi = val;
+                if (label.includes("Piyasa Değeri")) detaylar.piyasa_degeri = val;
+                if (label.includes("Açılış")) detaylar.acilis = val;
+                if (label.includes("Yıllık Aralık")) detaylar.yil_araligi = val;
+                if (label.includes("F/K")) detaylar.fk = val;
             });
 
             return {
                 kaynak: "Doviz.com",
-                fiyat: parseFloat(fiyatText.replace(",", ".").replace(/\./g, "").replace(",", ".")), // Doviz.com formatı biraz karışıktır, basit parse
-                fiyat_raw: fiyatText, // Ham metin (yedek)
+                fiyat: parseFloat(fiyatText.replace(/\./g, "").replace(",", ".")),
                 degisim: parseFloat(degisimText.replace(",", ".")),
                 baslik: baslik || symbol,
-                hacim_txt: hacim,
-                gun_araligi_txt: gunAraligi,
-                piyasa_degeri_txt: piyasaDegeri
+                hacim_txt: detaylar.hacim,
+                gun_araligi_txt: detaylar.gun_araligi,
+                piyasa_degeri_txt: detaylar.piyasa_degeri,
+                acilis_txt: detaylar.acilis,
+                yil_araligi_txt: detaylar.yil_araligi,
+                fk_txt: detaylar.fk
             };
         }
     } catch (e) { console.log("Doviz.com fail"); }
@@ -148,7 +171,7 @@ export default async function handler(req, res) {
     let sonuc = null;
 
     try {
-        // STRATEJİ: Önce TradingView (API), Olmazsa Doviz.com (HTML)
+        // Strateji: TradingView -> Doviz.com
         sonuc = await getirHisseTradingView(symbol);
         
         if (!sonuc) {
@@ -156,9 +179,9 @@ export default async function handler(req, res) {
         }
 
         if (sonuc) {
-            // --- GÜVENLİK KONTROLÜ (HATA BURADAYDI) ---
-            // Değişim oranı null veya undefined ise 0 kabul et
             const degisim = (sonuc.degisim !== null && sonuc.degisim !== undefined) ? Number(sonuc.degisim) : 0;
+            
+            // Formatlama İşlemleri
             
             // Gün Aralığı
             let gunAraligiFinal = "Veri Yok";
@@ -168,17 +191,27 @@ export default async function handler(req, res) {
                 gunAraligiFinal = sonuc.gun_araligi_txt;
             }
 
-            // Hacim
+            // Yıl Aralığı (YENİ)
+            let yilAraligiFinal = "Veri Yok";
+            if (sonuc.yil_dusuk && sonuc.yil_yuksek) {
+                yilAraligiFinal = `${formatPara(sonuc.yil_dusuk)} - ${formatPara(sonuc.yil_yuksek)}`;
+            } else if (sonuc.yil_araligi_txt) {
+                yilAraligiFinal = sonuc.yil_araligi_txt;
+            }
+
+            // Hacim & Piyasa Değeri
             let hacimFinal = "Veri Yok";
             if (sonuc.hacim) hacimFinal = formatHacim(sonuc.hacim);
             else if (sonuc.hacim_txt) hacimFinal = sonuc.hacim_txt;
 
-            // Piyasa Değeri
             let pdFinal = "Veri Yok";
             if (sonuc.piyasa_degeri) pdFinal = formatHacim(sonuc.piyasa_degeri);
             else if (sonuc.piyasa_degeri_txt) pdFinal = sonuc.piyasa_degeri_txt;
 
-            // Fiyat (Doviz.com'dan ham geldiyse olduğu gibi kullan, yoksa formatla)
+            // Diğer Detaylar
+            let acilisFinal = sonuc.acilis ? formatPara(sonuc.acilis, "TL") : (sonuc.acilis_txt || "Veri Yok");
+            let fkFinal = sonuc.fk_orani ? sonuc.fk_orani.toFixed(2) : (sonuc.fk_txt || "Veri Yok");
+
             const finalFiyat = sonuc.fiyat_raw ? sonuc.fiyat_raw + " TL" : formatPara(sonuc.fiyat, "TL");
 
             res.status(200).json({
@@ -186,14 +219,20 @@ export default async function handler(req, res) {
                 sembol: symbol,
                 baslik: sonuc.baslik,
                 kaynak: sonuc.kaynak,
+                sektor: sonuc.sektor || "Genel",
                 
                 fiyat: finalFiyat,
-                degisim_yuzde: degisim.toFixed(2), // Artık güvenli
+                degisim_yuzde: degisim.toFixed(2),
                 degisim_emoji: getTrendEmoji(degisim),
                 
-                gun_araligi: gunAraligiFinal,
-                hacim: hacimFinal,
-                piyasa_degeri: pdFinal
+                detaylar: {
+                    acilis: acilisFinal,
+                    gun_araligi: gunAraligiFinal,
+                    yil_araligi: yilAraligiFinal,
+                    hacim: hacimFinal,
+                    piyasa_degeri: pdFinal,
+                    fk_orani: fkFinal
+                }
             });
         } else {
             res.status(404).json({ 
