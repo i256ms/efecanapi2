@@ -1,42 +1,30 @@
-// --- İSİM SÖZLÜĞÜ (Kısaltmaları Güzelleştirir) ---
-const ISIMLER = {
-    "USD": "ABD Doları",
-    "EUR": "Euro",
-    "GBP": "İngiliz Sterlini",
-    "CHF": "İsviçre Frangı",
-    "CAD": "Kanada Doları",
-    "RUB": "Rus Rublesi",
-    "AED": "BAE Dirhemi",
-    "AUD": "Avustralya Doları",
-    "DKK": "Danimarka Kronu",
-    "SEK": "İsveç Kronu",
-    "NOK": "Norveç Kronu",
-    "JPY": "Japon Yeni",
-    "CNY": "Çin Yuanı",
-    "SAR": "Suudi Arabistan Riyali",
-    "TRY": "Türk Lirası",
-    
-    // Altın ve Emtia
-    "gram-altin": "Gram Altın",
-    "ceyrek-altin": "Çeyrek Altın",
-    "yarim-altin": "Yarım Altın",
-    "tam-altin": "Tam Altın",
-    "cumhuriyet-altini": "Cumhuriyet Altını",
-    "ata-altin": "Ata Altın",
-    "resat-altin": "Reşat Altın",
-    "22-ayar-bilezik": "22 Ayar Bilezik",
-    "18-ayar-altin": "18 Ayar Altın",
-    "14-ayar-altin": "14 Ayar Altın",
-    "has-altin": "Has Altın",
-    "gumus": "Gümüş",
-    "ons": "Ons Altın",
-    "brent-petrol": "Brent Petrol",
-    "platin": "Platin",
-    "paladyum": "Paladyum",
-    "dogalgaz": "Doğalgaz"
-};
-
 // --- YARDIMCI FONKSİYONLAR ---
+
+// 1. DİNAMİK İSİM DÖNÜŞTÜRÜCÜ (Otomatik Çeviri)
+function getDinamikIsim(kod) {
+    if (!kod) return "";
+    
+    // A) Standart Para Birimi Kontrolü (USD, EUR, GBP...)
+    // Node.js'in yerleşik özelliği sayesinde "JPY" verip "Japon Yeni" alıyoruz.
+    if (kod.length === 3 && !kod.includes("-")) {
+        try {
+            // 'tr' dilinde para birimi isimlerini iste
+            const translator = new Intl.DisplayNames(['tr'], { type: 'currency' });
+            const isim = translator.of(kod);
+            // Eğer sistem tanırsa döndür (Tanımazsa kodu geri verir, biz de alttaki adıma geçeriz)
+            if (isim && isim !== kod) return isim;
+        } catch (e) {}
+    }
+
+    // B) Emtia ve Altınlar (gram-altin -> Gram Altın)
+    // Tireleri boşluk yap, her kelimenin baş harfini büyüt
+    return kod
+        .split('-')
+        .map(kelime => kelime.charAt(0).toUpperCase() + kelime.slice(1))
+        .join(' ')
+        .replace("Altin", "Altın") // Ufak Türkçe düzeltmeleri
+        .replace("Gumus", "Gümüş");
+}
 
 // Esnek Sayı Okuyucu
 function parseNumber(str) {
@@ -87,7 +75,7 @@ function getTrendEmoji(degisim) {
     return "⚪"; 
 }
 
-// Anahtar Kelime Çözücü (Normalize)
+// Kullanıcı girdisini API anahtarına çeviren sözlük (Burası durmalı çünkü "Dolar" -> "USD" eşleşmesi lazım)
 function cozAnahtar(hamKod) {
     if (!hamKod) return null;
     const aranan = hamKod.toUpperCase().trim();
@@ -119,11 +107,6 @@ function cozAnahtar(hamKod) {
     return aranan;
 }
 
-// İsim Bulucu (Güzelleştirici)
-function getGuzelIsim(kod) {
-    return ISIMLER[kod] || kod.toUpperCase().replace(/-/g, " ");
-}
-
 async function fetchWithHeaders(url) {
     return await fetch(url, {
         headers: {
@@ -153,7 +136,7 @@ export default async function handler(req, res) {
         
         const data = await response.json();
         
-        // --- PARİTE MODU MU? ---
+        // --- PARİTE MODU ---
         let pariteModu = false;
         let baseCode = "";
         let quoteCode = "";
@@ -201,15 +184,14 @@ export default async function handler(req, res) {
                     const pariteDegisim = ((1 + baseDegisim/100) / (1 + quoteDegisim/100) - 1) * 100;
                     const guncellemeUnix = Math.floor(Date.now() / 1000);
 
-                    // İsimleri güzelleştiriyoruz
-                    const baseIsim = getGuzelIsim(baseCode);
-                    const quoteIsim = getGuzelIsim(quoteCode);
+                    // ARTIK İSİMLER OTOMATİK ÇEVRİLİYOR
+                    const baseIsim = getDinamikIsim(baseCode);
+                    const quoteIsim = getDinamikIsim(quoteCode);
 
                     return res.status(200).json({
                         tur: "Çapraz Kur (Hesaplanan)",
                         sembol: `${baseCode}/${quoteCode}`,
-                        // BURASI ARTIK GÜZEL GÖRÜNECEK
-                        baslik: `${baseIsim} / ${quoteIsim} Paritesi`,
+                        baslik: `${baseIsim} / ${quoteIsim}`,
                         kaynak: "Truncgil (Hesaplamalı)",
                         
                         fiyat: formatPara(pariteFiyati),
@@ -222,7 +204,7 @@ export default async function handler(req, res) {
                         detaylar: {
                             base: { kod: baseCode, isim: baseIsim, fiyat: formatPara(baseFiyat, "TL") },
                             quote: { kod: quoteCode, isim: quoteIsim, fiyat: formatPara(quoteFiyat, "TL") },
-                            not: "Bu veriler TL kurları üzerinden oranlanmıştır."
+                            not: "Veriler TL kurları üzerinden oranlanmıştır."
                         }
                     });
                 }
@@ -262,13 +244,13 @@ export default async function handler(req, res) {
         if (singleCode === "ons") paraBirimi = "$";
         if (singleCode === "EUR" && (kod || "").includes("PARITE")) paraBirimi = "";
 
-        // İsim Güzelleştirme
-        const guzelIsim = getGuzelIsim(singleCode);
+        // İsim Güzelleştirme (Otomatik)
+        const guzelIsim = getDinamikIsim(singleCode);
 
         res.status(200).json({
             tur: "Piyasa (Döviz/Altın/Emtia)",
             sembol: singleCode.toUpperCase().replace(/-/g, " "),
-            baslik: guzelIsim, // GBP yerine "İngiliz Sterlini" yazacak
+            baslik: guzelIsim, // "Amerikan Doları" gibi otomatik gelir
             kaynak: "Truncgil",
             
             fiyat: formatPara(satis, paraBirimi), 
