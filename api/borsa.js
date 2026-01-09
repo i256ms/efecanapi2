@@ -302,7 +302,7 @@ export default async function handler(req, res) {
         } else {
             res.status(404).json({ 
                 hata: true, 
-                mesaj: `Hisse verisi TradingView ve Doviz.com'dan çekilemedi (${symbol}).`,
+                mesaj: `Hisse verisi TradingView ve Doviz.com'dan çekilemedi.`,
             });
         }
     } catch (err) {
