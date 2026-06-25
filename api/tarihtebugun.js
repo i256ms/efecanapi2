@@ -1,6 +1,3 @@
-// Bu API, belirtilen tarihte dünyada yaşanmış en ilginç olayı 
-// doğrudan Gemini AI'nin kendi hafızasından bulup belgesel dilinde anlatır.
-
 const aylar = [
     "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", 
     "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"
@@ -32,10 +29,26 @@ export default async function handler(request, response) {
             });
         }
 
-        // Artık listeyi biz vermiyoruz, hafızasından en ilginç olanı kendisi buluyor!
+        // --- YENİ EKLENEN KISIM: Rastgele Kategori Motoru ---
+        const kategoriler = [
+            "bilim, teknoloji veya tıp",
+            "sanat, edebiyat, müzik veya sinema",
+            "uzay ve astronomi",
+            "spor",
+            "arkeolojik veya coğrafi keşifler",
+            "ilginç, gizemli ve sıra dışı tesadüfler",
+            "popüler kültür",
+            "savaş HARİCİNDE tarihe yön veren sivil olaylar"
+        ];
+        const rastgeleKategori = kategoriler[Math.floor(Math.random() * kategoriler.length)];
+        const rastgeleFaktor = Math.random(); // AI'ın aynı şeyi tekrarlamasını önlemek için
+
+        // Artık AI'a savaşları bırakıp bizim seçtiğimiz rastgele kategoriye odaklanmasını söylüyoruz!
         const prompt = `Sen çok bilgili, diksiyonu düzgün ve akıcı konuşan bir tarihçisin. 
 Bugün günlerden ${gun} ${ayAdi}. 
-Lütfen kendi hafızanı tarayarak, dünya tarihinde tam olarak bu tarihte (${gun} ${ayAdi}) yaşanmış insanlık tarihi açısından en ilgi çekici, en gizemli veya en epik olan 1 tane olayı bul.
+Lütfen kendi hafızanı tarayarak, dünya tarihinde tam olarak bu tarihte (${gun} ${ayAdi}) yaşanmış olaylar arasından SADECE **${rastgeleKategori}** alanıyla ilgili, en ilgi çekici veya şaşırtıcı 1 tane olayı seç. Lütfen savaşları ve çatışmaları anlatmaktan kaçın, bunun yerine odaklanmanı istediğim bu kategoriye yönel.
+(Farklılık faktörü: ${rastgeleFaktor} - Lütfen bilinen en popüler olay yerine daha az duyulmuş ama çok ilginç bir olayı tercih etmeye çalış.)
+
 Ardından bu olayı çok detaylı, ilgi çekici ve sürükleyici bir belgesel diliyle (yaklaşık 2-3 paragraf halinde) anlat. Metin sadece Türkçe olsun.
 
 Yanıtını SADECE aşağıdaki JSON formatında ver, ekstra hiçbir metin veya markdown (\`\`\`json) ekleme:
