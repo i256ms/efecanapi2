@@ -17,19 +17,25 @@ export default async function handler(request) {
         if (!gun) gun = simdi.getDate();
         if (!ay) ay = simdi.getMonth() + 1;
 
+        // BDFD'de kullanabilmen için o günün Unix zaman damgasını (mevcut yıla göre) hesapla
+        const yil = simdi.getFullYear();
+        const hedefTarih = new Date(yil, ay - 1, gun, 12, 0, 0); // O günün öğlen 12:00'si referans alınır
+        const unixZamanDamgasi = Math.floor(hedefTarih.getTime() / 1000);
+
         const ayAdi = aylar[ay - 1];
         const GEMINI_API_KEY = process.env.GEMINI_API_KEY; 
         
         if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY eksik!");
 
-        // YENİ PROMPT: Sadece kısa özetler ve "sorgu_anahtari" istiyoruz. Hız inanılmaz artacak.
+        // YENİ PROMPT: Mesaj başlığı eklendi
         const prompt = `Bugün günlerden ${gun} ${ayAdi}. 
 Hafızanı tarayarak, dünya tarihinde tam olarak bu tarihte yaşanmış olaylar arasından EN ÖNEMLİ ve İLGİ ÇEKİCİ tam 5 farklı olayı seç (Bilim, Sanat, Siyaset, Özel Gün vb. çeşitli olsun).
 
 Lütfen SADECE aşağıdaki JSON dizisi formatında yanıt ver:
 [
   {
-    "buton_basligi": "Discord butonu için 2-3 kelimelik çarpıcı başlık",
+    "mesaj_basligi": "Discord embed açıklaması (description) için kullanılacak, ilgili bir emoji içeren 3-5 kelimelik şık bir başlık (Örn: 🚀 Apollo 11 Ay'a İndi)",
+    "buton_basligi": "Discord butonu için 2-3 kelimelik çarpıcı, kısa başlık (Örn: Ay'a İlk Adım)",
     "kategori": "Olayın kategorisi",
     "kisa_ozet": "Olayın ne olduğunu anlatan 1 cümlelik net özet",
     "sorgu_anahtari": "MAKSİMUM 5-6 KELİMELİK, olayı eşsiz tanımlayan anahtar kelime öbeği (Örn: '1969 Apollo 11 Ay İnişi' veya '1453 İstanbul un Fethi'). Bu veri Discord butonuna gömülecek."
@@ -49,6 +55,7 @@ Lütfen SADECE aşağıdaki JSON dizisi formatında yanıt ver:
         return new Response(JSON.stringify({
             durum: "basarili",
             tarih: `${gun} ${ayAdi}`,
+            unix_zaman_damgasi: unixZamanDamgasi,
             olaylar: aiSonuc
         }), { status: 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
 
