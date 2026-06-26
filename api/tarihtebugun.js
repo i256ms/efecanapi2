@@ -52,18 +52,19 @@ Lütfen SADECE aşağıdaki JSON dizisi formatında yanıt ver:
         let aiText = aiData.candidates[0].content.parts[0].text.replace(/```json/g, '').replace(/```/g, '').trim();
         const aiSonuc = JSON.parse(aiText);
 
-        // --- YENİ EKLENEN KISIM: Encode İşlemi ---
-        // Gelen diziyi gezip, URL ve Discord butonları için güvenli encode edilmiş anahtarı ekliyoruz
-        const encodeEdilmisOlaylar = aiSonuc.map(olay => ({
+        // --- YENİ EKLENEN KISIM: Discord Buton Optimizasyonu ---
+        // Gelen diziyi gezip, Discord custom_id limitine takılmamak için
+        // URL encode (%20) YAPMADAN, sadece boşlukları alt çizgiye (_) çeviriyoruz.
+        const islenmisOlaylar = aiSonuc.map(olay => ({
             ...olay,
-            sorgu_anahtari_encoded: encodeURIComponent(olay.sorgu_anahtari)
+            sorgu_anahtari_kisa: olay.sorgu_anahtari.replace(/\s+/g, '_')
         }));
 
         return new Response(JSON.stringify({
             durum: "basarili",
             tarih: `${gun} ${ayAdi}`,
             unix_zaman_damgasi: unixZamanDamgasi,
-            olaylar: encodeEdilmisOlaylar
+            olaylar: islenmisOlaylar
         }), { status: 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
 
     } catch (error) {
