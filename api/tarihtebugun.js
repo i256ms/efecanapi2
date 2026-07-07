@@ -17,9 +17,9 @@ export default async function handler(request) {
         if (!gun) gun = simdi.getDate();
         if (!ay) ay = simdi.getMonth() + 1;
 
-        // BDFD'de kullanabilmen için o günün Unix zaman damgasını (mevcut yıla göre) hesapla
+        // BDFD'de kullanabilmen için o günün Unix zaman damgasını hesapla
         const yil = simdi.getFullYear();
-        const hedefTarih = new Date(yil, ay - 1, gun, 12, 0, 0); // O günün öğlen 12:00'si referans alınır
+        const hedefTarih = new Date(yil, ay - 1, gun, 12, 0, 0);
         const unixZamanDamgasi = Math.floor(hedefTarih.getTime() / 1000);
 
         const ayAdi = aylar[ay - 1];
@@ -27,7 +27,6 @@ export default async function handler(request) {
         
         if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY eksik!");
 
-        // YENİ PROMPT: Mesaj başlığı eklendi
         const prompt = `Bugün günlerden ${gun} ${ayAdi}. 
 Hafızanı tarayarak, dünya tarihinde tam olarak bu tarihte yaşanmış olaylar arasından EN ÖNEMLİ ve İLGİ ÇEKİCİ tam 5 farklı olayı seç (Bilim, Sanat, Siyaset, Özel Gün vb. çeşitli olsun).
 
@@ -38,23 +37,52 @@ Lütfen SADECE aşağıdaki JSON dizisi formatında yanıt ver:
     "buton_basligi": "Discord butonu için 2-3 kelimelik çarpıcı, kısa başlık (Örn: Ay'a İlk Adım)",
     "kategori": "Olayın kategorisi",
     "kisa_ozet": "Olayın ne olduğunu anlatan 1 cümlelik net özet",
-    "sorgu_anahtari": "MAKSİMUM 5-6 KELİMELİK, olayı eşsiz tanımlayan anahtar kelime öbeği (Örn: '1969 Apollo 11 Ay İnişi' veya '1453 İstanbul un Fethi'). Bu veri Discord butonuna gömülecek."
+    "sorgu_anahtari": "MAKSİMUM 5-6 KELİMELİK, olayı eşsiz tanımlayan anahtar kelime öbeği. Bu veri Discord butonuna gömülecek."
   }
 ]`;
 
         const aiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+            body: JSON.stringify({ 
+                contents: [{ parts: [{ text: prompt }] }],
+                safetySettings: [
+                    { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                    { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                    { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                    { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                ]
+            })
         });
 
         const aiData = await aiResponse.json();
-        let aiText = aiData.candidates[0].content.parts[0].text.replace(/```json/g, '').replace(/```/g, '').trim();
+        
+        // --- YENİ EKLENEN KOTA VE HATA KONTROLÜ ---
+        if (aiData.error) {
+            if (aiData.error.code === 429 || aiResponse.status === 429) {
+                return new Response(JSON.stringify({
+                    durum: "kota_doldu",
+                    mesaj: "⏳ Sistem şu an çok yoğun! Lütfen yaklaşık 1 dakika bekleyip komutu tekrar kullanın."
+                }), { status: 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } }); 
+            }
+            return new Response(JSON.stringify({
+                durum: "hata",
+                mesaj: "Yapay zeka bir sorunla karşılaştı.",
+                gemini_hata_mesaji: aiData.error.message
+            }), { status: 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
+        }
+
+        if (!aiData.candidates || !aiData.candidates[0] || !aiData.candidates[0].content) {
+            return new Response(JSON.stringify({
+                durum: "hata",
+                mesaj: "Yapay zeka boş bir yanıt döndü. Lütfen tekrar deneyin."
+            }), { status: 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
+        }
+        // ------------------------------------------
+
+        let aiText = aiData.candidates[0].content.parts[0].text.replace(/[\n\r\t]/g, ' ').replace(/```json/g, '').replace(/```/g, '').trim();
         const aiSonuc = JSON.parse(aiText);
 
-        // --- YENİ EKLENEN KISIM: Discord Buton Optimizasyonu ---
-        // Gelen diziyi gezip, Discord custom_id limitine takılmamak için
-        // URL encode (%20) YAPMADAN, sadece boşlukları alt çizgiye (_) çeviriyoruz.
         const islenmisOlaylar = aiSonuc.map(olay => ({
             ...olay,
             sorgu_anahtari_kisa: olay.sorgu_anahtari.replace(/\s+/g, '_')
@@ -68,6 +96,6 @@ Lütfen SADECE aşağıdaki JSON dizisi formatında yanıt ver:
         }), { status: 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
 
     } catch (error) {
-        return new Response(JSON.stringify({ status: "error", message: error.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ durum: "hata", mesaj: error.message }), { status: 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
     }
 }
